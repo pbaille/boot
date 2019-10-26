@@ -14,7 +14,8 @@
 (p/import-macros
  tag+ t/tag+
  defg g/generic
- generic+ g/generic+)
+ generic+ g/generic+
+ defm m/defm)
 
 (comment
 
