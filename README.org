@@ -1,0 +1,20 @@
+* Boot 
+
+Some basic toolbelt for clojure 
+
+features: 
+
+- generic functions 
+- enhanced user type definition
+- pattern matching functions 
+
+** Get started 
+
+Add this to your deps:
+
+`pbaille/boot {:mvn/version "0.1.0-SNAPSHOT"}`
+
+from one of your namespaces:
+
+`(:require [boot.core :refer [deft defg defm]])`
+
