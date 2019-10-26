@@ -12,9 +12,9 @@ features:
 
 Add this to your deps:
 
-`pbaille/boot {:mvn/version "0.1.0-SNAPSHOT"}`
+=pbaille/boot {:mvn/version "0.1.0-SNAPSHOT"}=
 
 from one of your namespaces:
 
-`(:require [boot.core :refer [deft defg defm]])`
+=(:require [boot.core :refer [deft defg defm]])=
 
