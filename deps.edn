@@ -1,0 +1,11 @@
+{:deps 
+ {org.clojure/clojure {:mvn/version "1.10.1-beta2"}
+  pbaille/matches {:mvn/version "0.1.7-SNAPSHOT"}}
+ :aliases
+ {:deploy {:extra-deps {deps-deploy {:mvn/version "RELEASE"}}
+           :main-opts ["-m" "deps-deploy.deps-deploy" "deploy"
+                       "boot.jar"]}
+  :pack {:extra-deps {pack/pack.alpha {:git/url "https://github.com/juxt/pack.alpha.git"
+                                       :sha "d9023b24c3d589ba6ebc66c5a25c0826ed28ead5"}}
+         :main-opts ["-m"]}}
+ :paths ["src"]}
