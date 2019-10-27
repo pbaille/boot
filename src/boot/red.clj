@@ -273,8 +273,6 @@
 
     (def§ negate)
 
-    
-
     (defn default [x] (§_ (or _ x)))
     (defn overide [x] (§ (constantly x)))
     (def else default)
