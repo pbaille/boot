@@ -85,19 +85,22 @@
 
     (do :ns-resolution
 
-        (defn- class-symbol [^java.lang.Class cls]
+        (defn class-symbol [^java.lang.Class cls]
           (symbol (.getName cls)))
 
-        (defn- namespace-name [^clojure.lang.Namespace ns]
+        (defn class-namespace [^java.lang.Class r]
+          (str/join "." (butlast (sym-split (symbol (.getName r))))))
+
+        (defn namespace-name [^clojure.lang.Namespace ns]
           (name (.getName ns)))
 
-        (defn- var-namespace [^clojure.lang.Var v]
+        (defn var-namespace [^clojure.lang.Var v]
           (name (.name (.ns v))))
 
-        (defn- var-name [^clojure.lang.Var v]
+        (defn var-name [^clojure.lang.Var v]
           (name (.sym v)))
 
-        (defn- var-symbol [^clojure.lang.Var v]
+        (defn var-symbol [^clojure.lang.Var v]
           (symbol (var-namespace v) (var-name v)))
 
         (defn ns-resolve-sym [sym]
@@ -111,6 +114,8 @@
               sym)))))
 
 (do :base-macros
+
+    (defrecord Aze [])
 
     (defn parse-fn [[fst & nxt :as all]]
 
@@ -552,27 +557,6 @@
         #_(destructure '[[x y z & xs] y])
         #_(mx*' (cs [[x & xs] (range 1)] [x xs] :nop))
         )
-
-    (_ :nsub
-
-       (defmacro nsub [name & body]
-         (let [parent-sym (symbol (str *ns*))
-               fullname (sym parent-sym '. name)
-               [ns-body decls] (split-with (comp keyword? first) body)]
-           `(do (ns ~fullname ~@ns-body)
-                (~'use '~parent-sym)
-                ~@decls
-                (in-ns '~parent-sym)
-                (require ['~fullname :as '~name]))))
-
-       (mx' (nsub aze
-                  (:require [mud.boot.curried :as c])
-                  (:use mud.boot.data)
-                  (c/defcurf add [x y] (+ x y))))
-
-       (aze/add 1)
-
-       (pp *ns*))
 
     (defmac when! [x & body]
       `(do (assert ~x)

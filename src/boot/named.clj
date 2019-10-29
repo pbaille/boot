@@ -1,9 +1,13 @@
 (ns boot.named
-  (:refer-clojure :exclude [cat cons str])
+  (:refer-clojure :exclude [cat str])
   (:require [clojure.string :as s]
-            [clojure.core :as c]))
+            [clojure.core :as c]
+            [clojure.string :as str]))
 
 ;; casting --------------------------------------------------------
+
+(defn named? [x]
+  (or (string? x)(symbol? x)(keyword? x)))
 
 (defn nswap
   ([f]
@@ -31,6 +35,13 @@
   [s]
   (let [re1 (re-pattern "(\\p{Lu}+[\\p{Ll}\\u0027\\p{Ps}\\p{Pe}]*)")
         re2 (re-pattern "[^\\p{L}\\p{N}\\u0027\\p{Ps}\\p{Pe}]+")]
+    (println "a"(some-> s
+                     (name)
+                     (s/replace re1 "-$1")))
+    (println "b"(some-> s
+                     (name)
+                     (s/replace re1 "-$1")
+                     (s/split re2)))
     (some-> s
             (name)
             (s/replace re1 "-$1")
@@ -66,8 +77,13 @@
 
 (defnf pure [x] "")
 
-(defnf cat [& xs]
-  (apply c/str (map name xs)))
+(defn- name-seq [x]
+  (cond (named? x) [(name x)]
+        (sequential? x) (mapcat name-seq x)))
+
+(defnf cat
+  [x & xs]
+  (apply c/str (name-seq (cons x xs))))
 
 (defn split
   ([x]
@@ -77,11 +93,28 @@
    (map #(cat (pure x) %)
         (s/split (name x) re))))
 
-(defn builder [empty]
+(defn builder [empty & [sep]]
   (fn
     ([] empty)
-    ([& xs] (apply cat empty xs))))
+    ([& xs]
+     (if sep
+       (cat empty (str/join sep (name-seq xs)))
+       (cat empty xs)))))
 
-(def str (builder ""))
-(def sym (builder (symbol "")))
-(def kw  (builder (keyword "")))
+(defnf join [sep x]
+  (str/join sep (name-seq x)))
+
+(def str0 "")
+(def sym0 (symbol str0))
+(def key0 (keyword str0))
+
+(def str (builder str0))
+(def sym (builder sym0))
+(def key (builder key0))
+
+(def dotstr (builder str0 "."))
+(def dotsym (builder sym0 "."))
+(def dotkey (builder key0 "."))
+
+(dotsym :key "Iop" "Pouet" '[am stram gram])
+

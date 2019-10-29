@@ -1,6 +1,8 @@
 {:deps 
  {org.clojure/clojure {:mvn/version "1.10.1-beta2"}
-  pbaille/matches {:mvn/version "0.1.7-SNAPSHOT"}}
+  pbaille/matches {:mvn/version "0.1.7-SNAPSHOT"}
+  ;; ns-tracker {:mvn/version "0.4.0"}
+  }
  :aliases
  {:deploy {:extra-deps {deps-deploy {:mvn/version "RELEASE"}}
            :main-opts ["-m" "deps-deploy.deps-deploy" "deploy"
@@ -9,3 +11,4 @@
                                        :sha "d9023b24c3d589ba6ebc66c5a25c0826ed28ead5"}}
          :main-opts ["-m"]}}
  :paths ["src"]}
+      
