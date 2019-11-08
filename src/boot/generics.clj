@@ -90,7 +90,7 @@
            (list xs)
            xs)))
 
-  (p/asserts
+  (p/assert
    (= (parse-cases '([a] :any 1))
       (parse-cases '(([a] 1))))
    (= (parse-cases '([a] :vec 1 1))

@@ -480,7 +480,7 @@
         (is {:a 1 :b 4 :c 0}
             (> {:a 1 :b 2} {:c 0 :b 4}))
 
-        ;; abstractions can go into collections and will be applied at its position in the received argument
+        ;; abstractions can go into collections and will be applied at their corresponding position in the received argument
         ;; here the abstraction is under the :a key and will be given 1 (the :a value of the argument)
 
         (is {:a 2 :b 0}
@@ -490,7 +490,7 @@
         ;; in vector it do the same but index based
 
         (is [1 0]
-            (> [0 0] [(§ inc) nil]))
+            (> [0 0] [(§ inc) nil])) ;; nil acts like ($ identity)
 
         ;; nested collection
 
@@ -519,7 +519,7 @@
 
         ;; when an abstracted datastructure receives an argument
         ;; it send it into all its deep leaves
-        ;; the is handy to decompose an algorythmn or to create structured data from something
+        ;; this is handy to decompose an algorythmn or to create structured data from something
 
         ;; nested
 

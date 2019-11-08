@@ -198,6 +198,15 @@
       `(do (defn ~x [& xs#] (apply ~y xs#))
            ~(when nxt `(import-fns ~@nxt))))
 
+    (defmac macro->fn [m]
+      `(partial (-> (var ~m) deref) nil nil))
+
+    (defmac call-m [m & xs]
+      `((macro->fn ~m) ~@xs))
+
+    (defmac apply-m [m & xs]
+      `(apply (macro->fn ~m) ~@xs))
+
     (defmac _ [& _] nil)
 
     (defmac cp [x & xs]
@@ -431,128 +440,128 @@
 
         (_ :flat-cs-emitted-or-form
 
-            (defn or-expr? [x]
-              (and (seq? x) (= `c/or (first x))))
+           (defn or-expr? [x]
+             (and (seq? x) (= `c/or (first x))))
 
-            (defn remove-useless-ors [x]
-              (cp x
-                  or-expr?
-                  (cons `c/or
-                        (mapcat (fn [y]
-                                  (mapv remove-useless-ors
-                                        (if (or-expr? y) (rest y) [y])))
-                                (rest x)))
-                  holycoll?
-                  ($ x remove-useless-ors)
-                  x))
+           (defn remove-useless-ors [x]
+             (cp x
+                 or-expr?
+                 (cons `c/or
+                       (mapcat (fn [y]
+                                 (mapv remove-useless-ors
+                                       (if (or-expr? y) (rest y) [y])))
+                               (rest x)))
+                 holycoll?
+                 ($ x remove-useless-ors)
+                 x))
 
-            (defmacro cs [& xs]
-              `(first ~(remove-useless-ors (cs-form xs))))
+           (defmacro cs [& xs]
+             `(first ~(remove-useless-ors (cs-form xs))))
 
-            (_ (let [a 0] ;; feel free to change the value and reevaluate
-                 (macroexpand '(cs
-                                (pos? a) :pos
-                                (neg? a) :neg
-                                :zero)))))
+           (_ (let [a 0] ;; feel free to change the value and reevaluate
+                (macroexpand '(cs
+                               (pos? a) :pos
+                               (neg? a) :neg
+                               :zero)))))
 
         (_ :cs-tuto
 
-            ;; like a normal let
-            (cs [a 1 b 2] (+ a b))
+           ;; like a normal let
+           (cs [a 1 b 2] (+ a b))
 
-            ;; but shorts on nil bindings
-            (cs [a (pos? -1) ;; this line binds 'a to nil,
-                 ;; this will shortcircuit the rest of the binding form
-                 ;; and jump to the second expression of the body
-                 _ (println "never printed")]
+           ;; but shorts on nil bindings
+           (cs [a (pos? -1) ;; this line binds 'a to nil,
+                ;; this will shortcircuit the rest of the binding form
+                ;; and jump to the second expression of the body
+                _ (println "never printed")]
 
-                ;; evaluated only in case of successful bindings
-                (println "never evaluated")
+               ;; evaluated only in case of successful bindings
+               (println "never evaluated")
 
-                ;; evaluated when binding form has been shortcircuited
-                (do (println "failure branch taken")
-                    :pouet))
+               ;; evaluated when binding form has been shortcircuited
+               (do (println "failure branch taken")
+                   :pouet))
 
-            ;; you can bind symbols starting with an underscore to nil without failing
-            (cs [a 1 b 2
-                 _neg-a (neg? a) ;; this bind _neg-a to nil without shortcirsuiting
-                 a (if _neg-a (- a) a)]
-                (+ a b)) ;;=> 3
+           ;; you can bind symbols starting with an underscore to nil without failing
+           (cs [a 1 b 2
+                _neg-a (neg? a) ;; this bind _neg-a to nil without shortcirsuiting
+                a (if _neg-a (- a) a)]
+               (+ a b)) ;;=> 3
 
-            ;; you can chain several couples of binding-form expression
-            (defn cs_1 [a]
-              ;; the ? symbol has no special meaning here
-              (cs [? (number? a)] {:number a}
-                  [? (string? a)] {:string a}
-                  [? (coll? a)]
-                  (cs [? (empty? a)] :empty
-                      [? (seq? a)] {:seq a}
-                      {:coll a})))
+           ;; you can chain several couples of binding-form expression
+           (defn cs_1 [a]
+             ;; the ? symbol has no special meaning here
+             (cs [? (number? a)] {:number a}
+                 [? (string? a)] {:string a}
+                 [? (coll? a)]
+                 (cs [? (empty? a)] :empty
+                     [? (seq? a)] {:seq a}
+                     {:coll a})))
 
-            (cs_1 1)
-            (cs_1 "a")
-            (cs_1 ())
-            (cs_1 '(1 2))
-            (cs_1 [1 2])
+           (cs_1 1)
+           (cs_1 "a")
+           (cs_1 ())
+           (cs_1 '(1 2))
+           (cs_1 [1 2])
 
-            ;; cs_1 works as intended but clearly can be done more concisely with a good old cond
-            ;; but wait, cs macro can also be used like cond!
+           ;; cs_1 works as intended but clearly can be done more concisely with a good old cond
+           ;; but wait, cs macro can also be used like cond!
 
-            ;; if you need only to check something but do not need the return value
-            ;; like we seen in cs_1,  e.g [? (test? ...)]
-            ;; it seems kind of tiring to do so, so we've introduce a shorthand for this case
+           ;; if you need only to check something but do not need the return value
+           ;; like we seen in cs_1,  e.g [? (test? ...)]
+           ;; it seems kind of tiring to do so, so we've introduce a shorthand for this case
 
-            (let [a -42]
+           (let [a -42]
 
-              (=
-               ;; normal syntax
-               (cs [? (pos? a)] a :negative)
-               ;; shorthand syntax (condishpatible)
-               (cs (pos? a) a :negative)))
+             (=
+              ;; normal syntax
+              (cs [? (pos? a)] a :negative)
+              ;; shorthand syntax (condishpatible)
+              (cs (pos? a) a :negative)))
 
-            ;; as we see it can be use like 'if
-            (cs (pos? -1) :pos :not-pos)
+           ;; as we see it can be use like 'if
+           (cs (pos? -1) :pos :not-pos)
 
-            ;; or when (with only one expression body)
-            (cs (pos? 1) :pos)
+           ;; or when (with only one expression body)
+           (cs (pos? 1) :pos)
 
-            ;; or cond (without the need for the :else thing)
-            (let [a 0] ;; feel free to change the value and reevaluate
-              (cs
-               (pos? a) :pos
-               (neg? a) :neg
-               :zero))
+           ;; or cond (without the need for the :else thing)
+           (let [a 0] ;; feel free to change the value and reevaluate
+             (cs
+              (pos? a) :pos
+              (neg? a) :neg
+              :zero))
 
-            ;; this kind of unification of if and cond came from arc-lisp,
-            ;; i cannot find a solid argument against it
+           ;; this kind of unification of if and cond came from arc-lisp,
+           ;; i cannot find a solid argument against it
 
-            ;; we can redefine cs_1 in a more clean way
-            (defn cs_2 [a]
-              (cs (number? a) {:number a}
-                  (string? a) {:string a}
-                  (coll? a)
-                  (cs (empty? a) :empty
-                      (seq? a) {:seq a}
-                      {:coll a})))
+           ;; we can redefine cs_1 in a more clean way
+           (defn cs_2 [a]
+             (cs (number? a) {:number a}
+                 (string? a) {:string a}
+                 (coll? a)
+                 (cs (empty? a) :empty
+                     (seq? a) {:seq a}
+                     {:coll a})))
 
-            ;; the thing is that now you can mix condish syntax and condletish syntax
+           ;; the thing is that now you can mix condish syntax and condletish syntax
 
-            (defn cs_3 [a]
-              (cs (number? a) [:num a]
-                  (symbol? a) [:sym a]
-                  (string? a) [:str a]
-                  [? (sequential? a)
-                   sa (seq a)]
-                  (into
-                   [(cs (vector? a) :vec
-                        (list? a) :lst
-                        :seq)]
-                   (map cs_3 sa))
-                  [(type a) a]))
+           (defn cs_3 [a]
+             (cs (number? a) [:num a]
+                 (symbol? a) [:sym a]
+                 (string? a) [:str a]
+                 [? (sequential? a)
+                  sa (seq a)]
+                 (into
+                  [(cs (vector? a) :vec
+                       (list? a) :lst
+                       :seq)]
+                  (map cs_3 sa))
+                 [(type a) a]))
 
-            (cs_3 [1 2 "aze" 'rt '(42 :iop a) {:a 1}])
+           (cs_3 [1 2 "aze" 'rt '(42 :iop a) {:a 1}])
 
-            )
+           )
 
         #_(destructure '[[x y z & xs] y])
         #_(mx*' (cs [[x & xs] (range 1)] [x xs] :nop))
@@ -569,7 +578,7 @@
     (defmac let! [bs & xs]
       `(let ~bs (assert ~@xs) ~(last xs)))
 
-)
+    )
 
 (do :misc
 
@@ -869,7 +878,16 @@
       []
       `(~'ns ~(symbol (str *ns*))
         (:refer-clojure :exclude ~'[assert not-empty empty or cat])
-        (:use mad.boot.prelude))))
+        (:use mad.boot.prelude)))
+
+    (defmacro use!
+      "the purpose of this is to be able to 'use' this ns without do the :refer-clojure :exclude boilerplate
+       but this does not works :)"
+      []
+      `(do
+        (doseq [s# '~'[assert not-empty empty or and cat]]
+          (ns-unmap *ns* s#))
+        (use '~'boot.prelude))))
 
 (comment
 
@@ -905,3 +923,56 @@
   (fu? (fu [a] a))
 
   )
+
+(comment 
+  (defn builder
+    [{:keys [lvl? sub? sup? wrap cat empty]}]
+    (let [never (constantly nil)
+
+          not-sup? (and sup? (complement sup?))
+          not-sub? (and sub? (complement sub?))
+          not-lvl? (and lvl? (complement lvl?))
+          is-sub? (or sub? not-sup? not-lvl? never)
+          is-sup? (or sup? not-sub? not-lvl? never)
+          is-lvl? (or lvl? not-sup? not-sub? never)
+
+          wrap (or wrap (and empty (partial into empty)) identity)
+
+          build-seq
+          (fn self [x]
+            (cond
+              (is-lvl? x) (list x)
+              (is-sup? x) (mapcat self x)
+              (is-sub? x) (list (wrap x))
+              :else (error "builder: cannot determine level of:" x)))]
+      (fn build
+        ([x] (wrap x))
+        ([x & xs]
+         (wrap (reduce cat (build-seq (cons x xs))))))))
+
+  (def v (builder {:lvl? vector?
+                                        ;:sub? (complement sequential?)
+                   :sup? sequential?
+                   :wrap vec
+                   :cat concat}))
+
+  (v [1 2])
+  (v [1 2] [1 2])
+  (v [1 2] (map (fn [x] (vec (repeat 2 x))) [1 2]))
+
+  (marked-fn mfn)
+
+  (def m (builder {:lvl? map?
+                   :sup? sequential?
+                   :cat (fn catmap [x y]
+                          (cond
+                            (not x) y
+                            (not y) x
+                            (every? map? [x y]) (merge-with catmap x y)
+                            (every? mfn? [x y]) (comp x y)
+                            (mfn? y) (y x)
+                            :else y))}))
+
+  (m {:a 1} [{:p {:v 1}} [{:m 2 :p {:c 'yes :v (mfn [x] (inc x))}}]])
+
+  (mfn? (mfn [x] x)))

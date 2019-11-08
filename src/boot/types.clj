@@ -192,7 +192,7 @@
 
 (do :assertions
 
-    (p/asserts
+    (p/assert
      (classes :nil)
      (classes :coll)
      (classes :prim)
@@ -200,7 +200,7 @@
      (classes :sym)
      (classes #{:sym :key}))
 
-    (p/asserts
+    (p/assert
      (parents :vec)
      (childs :coll))
     )
@@ -285,7 +285,7 @@
              (or (isa state t1 x)
                  (when ts (recur ts)))))))
 
-    (p/asserts
+    (p/assert
      (isa :any)
      (isa :line ())
      (isa :line [1 2 3])
