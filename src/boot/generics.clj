@@ -20,8 +20,8 @@
       (:fns @state))
 
     (defn get-spec! [name]
-      (p/assert (get-in @state [:fns name])
-                (str "Cannot find spec " name)))
+      (or (get-in @state [:fns name])
+          (ex-info (str "Cannot find spec " name) {})))
 
     (defn reset-registry! []
       (swap! state assoc :fns {}))
@@ -310,7 +310,7 @@
       `(do ~@(map #(implement tag %) impls)))
     )
 
-#_(do :tests
+(comment :tests
 
   #_(pp (@reg '+))
   (generic g1 [x]
@@ -322,7 +322,7 @@
            ;; group litteral can be handy
            #{:key :sym} :key-or-sym)
 
-  (p/asserts
+  (p/assert
    (g1 [])
    (g1 #{})
    (g1 '())
@@ -340,7 +340,7 @@
   (implementers (get-spec! 'g1))
   (get-reg)
 
-  (p/asserts
+  (p/assert
    (g1 "a")
    (g1 (atom {})))
 
@@ -357,7 +357,7 @@
            ([x y z & more]
             [:variadic x y z more]))
 
-  (p/asserts
+  (p/assert
    (= (g2 [] 1)
       [:g2vec [] 1])
    (= (g2 #{} 1)
@@ -376,7 +376,7 @@
             ([a b] :vec [:g2vec2 a b])
             ([a b c & ds] :str [:variadstr a b c ds]))
 
-  (p/asserts
+  (p/assert
    (= (g2 [] 1)
       [:g2vec2 [] 1])
    (= (g2 "me" 1 2 3 4)
@@ -390,7 +390,7 @@
 
   (get-spec! 'g2+)
 
-  (p/asserts
+  (p/assert
 
    (= (g2 () 2) [:g2coll () 2])
    (= (g2+ () 2) [:g2+seq2 () 2])
@@ -406,14 +406,13 @@
 
   (fork g2+ g2+clone)
 
-
   ;; type+ is like extendtype
   ;; implement several generics at a time for a given type
   (type+ :fun
          (g1 [x] :g1fun)
          (g2 [x y] [:g2fun2 x y]))
 
-  (p/asserts
+  (p/assert
    (= [:g2fun2 inc 1] (g2 inc 1))
    (= :g1fun (g1 (fn [a]))))
 
@@ -432,8 +431,9 @@
 
   ;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
 
-  (p/asserts (= "prot1-f fun" (prot1-f inc))
-             (= "prot1-f fun arity 2" (prot1-f inc 42)))
+  (p/assert
+   (= "prot1-f fun" (prot1-f inc))
+   (= "prot1-f fun arity 2" (prot1-f inc 42)))
 
   (generic sip'
            ([a b]
@@ -447,7 +447,7 @@
            ([a b & xs]
             (apply sip' (sip' a b) xs)))
 
-  (p/asserts
+  (p/assert
    (= (sip' [] 1 2 3)
       [1 2 3])
    (= (sip' #{} 1 2 3)
@@ -461,7 +461,7 @@
            :word :validword
            :any x)
 
-  (p/asserts
+  (p/assert
    (not (valid' [nil 1 nil]))
    (valid' [1 2 3])
    (valid' #{1 2 3})
@@ -476,7 +476,7 @@
 
   (get-spec! 'valid')
 
-  (p/asserts
+  (p/assert
    (= :validkey (valid' :a))
    (= :validword (valid' 'a)))
 

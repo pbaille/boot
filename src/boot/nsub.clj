@@ -114,6 +114,10 @@
       ([x & xs]
        `(defmac+ ~(parse-defmac+ (cons x xs)))))
 
+    [:tutorial
+     "defmac+ is letting you define a macro as you may have guessed"
+     ""]
+
     (comment
       (mx' (defmac+ iop [a b] (list b a)))
 
@@ -306,7 +310,6 @@
       (let [xs
             (reduce
              (fn [a e]
-                                        ;(println a e)
                (merge
                 a (if (vec? e)
                     {(first e) (merge {:as (first e)
@@ -315,11 +318,8 @@
                     {e {:form [e :as e]
                         :as e}})))
              {} xs)
-                                        ;_ (println xs)
             compile-element
             (fn [[name {:keys [as form]}]]
-              #_(println "for" name (sub-namespaces name)
-                         (inc (count (c/name name))))
               (cons form
                     (for [sub (prob (sub-namespaces name))]
                       [(n/dotsym name sub) :as (n/dotsym as sub)])))]
@@ -334,7 +334,7 @@
      #'clojure.core/ns
      (fn [_]
        (fn [a b & xs]
-         (println "expanding ns" xs)
+         ;; (println "expanding ns" xs)
          (apply ns-impl a b
                 (map (fn [x]
                        (if (= :require (and (seq? x) (first x)))

@@ -259,7 +259,7 @@
              [& body#]`(~'~nam ~'~'_ ~@body#))
            (defmacro ~defnam
              [name# & xs#]
-             `(do 
+             `(do
                 (def ~name# (~'~nam ~@xs#))
                 (def ~(p/sym name# '_) (~'~nam_ ~@xs#))
                 (def ~(p/sym name# '*) (partial apply (~'~nam ~@xs#)))
@@ -271,7 +271,7 @@
     (decline-macros guard
                     (fn [f] (§_ (and (or (f _) nil) _))))
 
-    (def§ negate)
+    ;;(def§ negate)
 
     (defn default [x] (§_ (or _ x)))
     (defn overide [x] (§ (constantly x)))
@@ -504,6 +504,27 @@
 
         )
 
+    (is (> 10 (> (§ {:dec §dec
+                     :inc §inc})
+                 (§ {:id nil
+                     :neg (k (§ -))
+                     })))
+        {:dec 9, :inc 11,
+         :neg -10, :id 10})
+
+    (do :defs
+
+        ;; def§
+
+        ;;we have shorthand for defining abstraction at the top level
+
+        (def§ negate x (- x))
+
+        (def§ prob x (println x) x)
+
+        (is -1
+            (> 1 negate)))
+
     (do :functions
 
         ;; (abstraction / function as computation/transformation)
@@ -529,125 +550,104 @@
 
         ;; composed
 
-        (is (> 10 (> (§ {:dec §dec
-                         :inc §inc})
-                     (§ {:id nil
-                         :neg (k (§ -))
-                         })))
-            {:dec 9, :inc 11,
-             :neg -10, :id 10})
+        (do :guards
 
-    )
+            ;; guards and shortcircuiting
 
-    (do :defs
+            ;; guards returns their argument on success or nil otherwise
+            (> 1 (guard pos?) §inc)
 
-        ;; def§
+            (> -1
+               (guard pos?) ;; this fails so the whole form is shortcircuited
+               prob         ;; never called
+               §dec         ;; neither
+               )
 
-        ;;we have shorthand for defining abstraction at the top level
+            ;; with fork
+            (< 1
+               (>_ (guard pos?) :pos)
+               (guard neg?)
+               (>_ (guard zero?) :zero!))
 
-        (def§ negate x (- x))
+            (let [f (<_
+                     (>_ (guard pos?) :pos)
+                     (guard neg?)
+                     (>_ (guard zero?) :zero!))]
+              (is :pos (f 1) (> 1 f))
+              (is -1 (f -1) (> -1 f))
+              (is :zero! (f 0) (> 0 f))))
 
-        (def§ prob x (println x) x)
+        (do :default-overide
 
-        (is -1
-            (> 1 negate)))
-
-    (do :guards
-
-        ;; guards and shortcircuiting
-
-        ;; guards returns their argument on success or nil otherwise
-        (> 1 (guard pos?) §inc)
-
-        (> -1
-           (guard pos?) ;; this fails so the whole form is shortcircuited
-           prob         ;; never called
-           §dec         ;; neither
-           )
-
-        ;; with fork
-        (< 1
-           (>_ (guard pos?) :pos)
-           (guard neg?)
-           (>_ (guard zero?) :zero!))
-
-        (let [f (<_
-                 (>_ (guard pos?) :pos)
-                 (guard neg?)
-                 (>_ (guard zero?) :zero!))]
-          (is :pos (f 1) (> 1 f))
-          (is -1 (f -1) (> -1 f))
-          (is :zero! (f 0) (> 0 f))))
-
-    (do :default-overide
-
-        ;; default and overide
+            ;; default and overide
 
 
-        ;; (default 1) returns an abstraction that will return 1 if given nil or its argument unchanged
-        (is 12 (> nil (default 12)))
-        (is 12 (> 12 (default 1)))
+            ;; (default 1) returns an abstraction that will return 1 if given nil or its argument unchanged
+            (is 12 (> nil (default 12)))
+            (is 12 (> 12 (default 1)))
 
-        ;; (overide :foo) will ignore its given arg and always return :foo
-        (> '(1 2 3) (overide '(2 3 4)))
+            ;; (overide :foo) will ignore its given arg and always return :foo
+            (> '(1 2 3) (overide '(2 3 4)))
 
-        ;; 'default is also named 'else and 'overide 'k
-        (> nil
-           (§ {:a (k '(a b c))
-               :b (else {:a 2})
-               :c (>_ (else 0) §inc)}))
+            ;; 'default is also named 'else and 'overide 'k
+            (> nil
+               (§ {:a (k '(a b c))
+                   :b (else {:a 2})
+                   :c (>_ (else 0) §inc)}))
 
-        (> nil (§ 12)))
+            (> nil (§ 12)))
 
-    (do :importing
-        ;; importing
+        (do :importing
+            ;; importing
 
-        (import-preds zero? vector?)
-        (import-fns reverse shuffle)
+            (import-preds zero? vector?)
+            (import-fns reverse shuffle)
 
-        (is [1 2]
-            (> [1 2] §vector?))
+            (is [1 2]
+                (> [1 2] §vector?))
 
-        (> [1 2 3] §shuffle))
+            (> [1 2 3] §shuffle))
 
-    (do :variations
+        (do :variations
 
 
-        ;; every defined function is red will automatically define several variations
+            ;; every defined function is red will automatically define several variations
 
-        ;; we will look at the variations of the > funtion
-        ;; an applied version
-        ;; (is to > what  core/list* is to core/list)
-        ;; it takes a sequential value as last argument
-        (is 3
-            (>* 1 [§inc §inc])
-            (>* 1 §inc [§inc])
-            (> 1 §inc §inc))
+            ;; we will look at the variations of the > funtion
+            ;; an applied version
+            ;; (is to > what  core/list* is to core/list)
+            ;; it takes a sequential value as last argument
+            (is 3
+                (>* 1 [§inc §inc])
+                (>* 1 §inc [§inc])
+                (> 1 §inc §inc))
 
-        ;; underscore version
-        ;; (>_ §inc §inc) <-> #(> % §inc §inc)
-        ;; useful to compose functions together
-        (is 3
-            (> 1 §inc §inc)
-            ((>_ §inc §inc) 1)
-            ((>_* [§inc §inc]) 1))
+            ;; underscore version
+            ;; (>_ §inc §inc) <-> #(> % §inc §inc)
+            ;; useful to compose functions together
+            (is 3
+                (> 1 §inc §inc)
+                ((>_ §inc §inc) 1)
+                ((>_* [§inc §inc]) 1))
 
-        ;; abstracted
-        ;; all n+1 arguments will be abstracted before being fed to >
-        (is 3
-            (§> 1 inc inc)
-            (> 1 §inc §inc))
+            ;; abstracted
+            ;; all n+1 arguments will be abstracted before being fed to >
+            (is 3
+                (§> 1 inc inc)
+                (> 1 §inc §inc))
 
-        ;; combined variations
-        (is 3
-            (§>* 1 [inc inc])
-            ((§>_ inc inc) 1)
-            ((§>_* [inc inc]) 1))
+            ;; combined variations
+            (is 3
+                (§>* 1 [inc inc])
+                ((§>_ inc inc) 1)
+                ((§>_* [inc inc]) 1))
 
-        ;; when defining an abstraction, all variations are automatically defined
-        (def§ negate x (- x))
+            ;; when defining an abstraction, all variations are automatically defined
+            (def§ negate x (- x))
 
-        
+            
+
+            )
 
         )
 

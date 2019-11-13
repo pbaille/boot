@@ -1,7 +1,7 @@
 (ns boot.state
   (:refer-clojure :exclude [reset!]))
 
-(def state0 {:fns {} :types {} :guards {}})
+(def state0 {:fns {} :types {} :guards {} :namespaces {}})
 
 (def state (atom state0))
 
