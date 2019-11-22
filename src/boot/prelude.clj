@@ -244,6 +244,24 @@
          (println "\n\n")
          ~@bod))
 
+    (defmacro f1 [pat & body]
+      `(fn [~pat] ~@body))
+
+    (defmacro f_ [& body]
+      `(fn [~'_] ~@body))
+
+    (defmacro defn+
+      "behave the same as defn but will also define applied and underscore variations"
+      [name & body]
+      (let [name* (sym name '*)
+            name_ (sym name '_)
+            name_* (sym name '_*)]
+        `(do (declare ~name* ~name_ ~name_*)
+             (defn ~name ~@body)
+             (def ~name* (p* ~name))
+             (defn ~name_ [& xs#] #(~name* % xs#))
+             (def ~name_* (p* ~name_)))))
+
 
     (do :assert
 
@@ -576,7 +594,7 @@
          ~@body))
 
     (defmac let! [bs & xs]
-      `(let ~bs (assert ~@xs) ~(last xs)))
+      `(let ~bs (assert ~@xs)))
 
     )
 
@@ -595,7 +613,11 @@
 
     (defn holycoll? [x]
       (c/or (seq? x) (vec? x)
-            (set? x) (holymap? x))))
+            (set? x) (holymap? x)))
+
+    (defn guard [f]
+      (fn [x & xs]
+        (when (apply f x xs) x))))
 
 (do :template
 
@@ -871,14 +893,6 @@
       (clojure.pprint/simple-dispatch 'λ)))
 
 (do :xp
-
-    (defmacro use!
-      "the purpose of this is to be able to 'use' this ns without do the :refer-clojure :exclude boilerplate
-       but this does not works :)"
-      []
-      `(~'ns ~(symbol (str *ns*))
-        (:refer-clojure :exclude ~'[assert not-empty empty or cat])
-        (:use mad.boot.prelude)))
 
     (defmacro use!
       "the purpose of this is to be able to 'use' this ns without do the :refer-clojure :exclude boilerplate
