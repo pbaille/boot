@@ -78,7 +78,8 @@
 (defnf pure [x] "")
 
 (defn- name-seq [x]
-  (cond (named? x) [(name x)]
+  (cond (char? x) [(c/str x)]
+        (named? x) [(name x)]
         (sequential? x) (mapcat name-seq x)))
 
 (defnf cat
@@ -106,15 +107,13 @@
 
 (def str0 "")
 (def sym0 (symbol str0))
-(def key0 (keyword str0))
+(def kw0 (keyword str0))
 
 (def str (builder str0))
 (def sym (builder sym0))
-(def key (builder key0))
+(def kw (builder key0))
 
 (def dotstr (builder str0 "."))
 (def dotsym (builder sym0 "."))
-(def dotkey (builder key0 "."))
-
-(dotsym :key "Iop" "Pouet" '[am stram gram])
+(def dotkey (builder kw0 "."))
 

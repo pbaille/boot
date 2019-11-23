@@ -38,7 +38,7 @@
    (when (seq couples)
      (or (and (get x (ffirst couples))
               (mut* x (first couples)))
-         (recur x (next couples)))))
+         (mut< x (next couples)))))
   ([x l f & lfs]
    (mut< x (cons [l f] (partition 2 lfs)))))
 

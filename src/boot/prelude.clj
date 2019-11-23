@@ -4,7 +4,8 @@
   (:require
    [clojure.core :as c]
    [clojure.string :as str]
-   [clojure.set :as set]))
+   [clojure.set :as set]
+   [boot.named :as n]))
 
 (def debug (atom nil))
 
@@ -83,6 +84,8 @@
     (def sym0 (symbol ""))
     (def sym0? (p = sym0))
 
+    (defn ns-sym [] (symbol (str *ns*)))
+
     (do :ns-resolution
 
         (defn class-symbol [^java.lang.Class cls]
@@ -115,9 +118,8 @@
 
 (do :base-macros
 
-    (defrecord Aze [])
 
-    (defn parse-fn [[fst & nxt :as all]]
+    #_(defn parse-fn [[fst & nxt :as all]]
 
       (let [[name fst & nxt]
             (if (symbol? fst)
@@ -149,7 +151,7 @@
                :impls impls
                :cases (mapv (p* list*) impls))))
 
-    (defmacro defmac
+    #_(defmacro defmac
       "personal defmacro
        define a regular macro
        but also a function that do the same thing as the macro
@@ -163,6 +165,55 @@
              (def ~fname* (p* ~fname))
              (defmacro ~name ~(c/or doc "")
                ~(assoc opts :fn fname)
+               ([& xs#] (apply ~fname xs#))))))
+
+    (defn parse-fn [[fst & nxt :as all]]
+
+      (let [[name fst & nxt]
+            (if (symbol? fst)
+              (cons fst nxt)
+              (concat [nil fst] nxt))
+
+            [doc fst & nxt]
+            (if (string? fst)
+              (cons fst nxt)
+              (concat ["" fst] nxt))
+
+            [meta fst & nxt]
+            (if (map? fst)
+              (cons fst nxt)
+              (concat [{} fst] nxt))
+
+            impls
+            (if (vector? fst)
+              {fst (vec nxt)}
+              (into {}
+                    (map
+                     (c/fn [[args & body]]
+                       [args (vec body)])
+                     (cons fst nxt))))]
+
+        {:meta meta
+         :name (c/or name (gensym))
+         :name? name
+         :doc doc
+         :impls impls
+         :cases (mapv (p* list*) impls)}))
+
+    (defmacro defmac
+      "personal defmacro
+       define a regular macro
+       but also a function that do the same thing as the macro
+       (when receiving quoted args)
+       here I hope that it could ease macro composition and later ckish embeddings"
+      [& body]
+      (let [{:keys [name doc meta cases]} (parse-fn body)
+            fname (sym name '-fn)
+            fname* (sym fname '*)]
+        `(do (defn ~fname ~@cases)
+             (def ~fname* (p* ~fname))
+             (defmacro ~name ~doc
+               ~(assoc meta :fn fname)
                ([& xs#] (apply ~fname xs#))))))
 
     (defmac marked-fn
@@ -250,6 +301,14 @@
     (defmacro f_ [& body]
       `(fn [~'_] ~@body))
 
+    (defmac fn-argumentation
+      [& body]
+      (let [{:keys [meta doc cases name]} (parse-fn body)]
+        `(fn ~name
+           ~@(map (fn [[argv & body]]
+                    `(~(vec (rest argv)) (fn [~(first argv)] ~@body)))
+                  cases))))
+
     (defmacro defn+
       "behave the same as defn but will also define applied and underscore variations"
       [name & body]
@@ -259,9 +318,9 @@
         `(do (declare ~name* ~name_ ~name_*)
              (defn ~name ~@body)
              (def ~name* (p* ~name))
-             (defn ~name_ [& xs#] #(~name* % xs#))
+             (def ~name_ (fn-argumentation ~@body))
+             #_(defn ~name_ [& xs#] #(~name* % xs#))
              (def ~name_* (p* ~name_)))))
-
 
     (do :assert
 
@@ -596,6 +655,57 @@
     (defmac let! [bs & xs]
       `(let ~bs (assert ~@xs)))
 
+    (do :guard
+
+        (defn- argument-symbol
+          "takes an argument pattern, try to extract the symbol that is bound to the whole value
+           (think ':as for vector or map destructuring patterns)"
+          [x]
+          (cond
+            (vec? x) (let [[a b] (take-last 2 x)] (when (= :as a) b))
+            (map? x) (:as x)
+            (sym? x) x))
+
+        (defmac guard
+          "same as 'fn, but when evaluate to a truthy value, returns the first argument unchanged"
+          [& body]
+          (let [{:keys [meta doc cases name]} (parse-fn body)]
+            `(fn ~name
+               ~@(map (fn [[argv & body]]
+                        `(~argv ~@(butlast body)
+                          (when ~(last body)
+                            ~(assert {"first argument of a guard has to be bound (for destructuring patterns, use :as)"
+                                      (argument-symbol (first argv))}))))
+                      cases))))
+
+        (defmac guard_
+          [& body]
+          (let [{:keys [meta doc cases name]} (parse-fn body)]
+            `(fn ~name
+               ~@(map (fn [[argv & body]]
+                        `(~(vec (rest argv)) (guard [~(first argv)] ~@body)))
+                      cases))))
+
+        (defmac defguard
+          "behave the same as defn but will also define applied and underscore variations"
+          [name & body]
+          (let [name* (sym name '*)
+                name_ (sym name '_)
+                name_* (sym name '_*)]
+            `(do (declare ~name* ~name_ ~name_*)
+                 (def ~name (guard ~@body))
+                 (def ~name* (p* ~name))
+                 (def ~name_ (guard_ ~@body))
+                 (def ~name_* (p* ~name_)))))
+
+        (do (defguard gt
+              ([x] x)
+              ([x y] (c/> x y))
+              ([x y & zs] (every? (partial c/> x) (cons y zs))))
+
+            (is 4 ((gt_ 3) 4))
+            (is (nil? ((gt_ 3) 2)))))
+
     )
 
 (do :misc
@@ -892,6 +1002,116 @@
     (defmethod clojure.pprint/simple-dispatch clojure.lang.AFunction [x]
       (clojure.pprint/simple-dispatch 'λ)))
 
+(do :defmac+
+
+        (defn parse-defmac+ [[name & [x & xs]]]
+          (let [[doc [x & xs]] (if (string? x) [x xs] ["no doc" (cons x xs)])
+                [meta [keys expansion & xs]] (if (map? x) [x xs] [{} (cons x xs)])
+                parse-cases (cond (seq? (first xs)) xs
+                                  (second xs) (list xs)
+                                  :else
+                                  (let [argv (or (first xs) keys)
+                                        ss (shadows argv)]
+                                    [(list argv (zipmap (map keyword ss) ss))]))]
+            {:doc doc
+             :meta meta
+             :name name
+             :keys (vec (shadows keys))
+             :expansion expansion
+             :parse-cases parse-cases}))
+
+        (do :asserts
+            (is (parse-defmac+ '(iop [a b c & xs] (pouet)))
+                '{:doc "no doc",
+                  :meta {},
+                  :name iop,
+                  :keys [a xs c b],
+                  :expansion (pouet),
+                  :parse-cases [([a b c & xs] {:a a, :xs xs, :c c, :b b})]})
+            (is (parse-defmac+ '(iop [a b c xs] (pouet) [b a c & xs]))
+                '{:doc "no doc",
+                  :meta {},
+                  :name iop,
+                  :keys [a xs c b],
+                  :expansion (pouet),
+                  :parse-cases [([b a c & xs] {:a a, :xs xs, :c c, :b b})]})
+            (is (parse-defmac+ '(iop "foo" {:me :ta} [a b c] (pouet) ([x] 'iop) ([x & xs] 'pouet)))
+                '{:doc "foo",
+                  :meta {:me :ta},
+                  :name iop,
+                  :keys [a c b],
+                  :expansion (pouet),
+                  :parse-cases (([x] 'iop) ([x & xs] 'pouet))}))
+
+        (defmacro defmac+
+
+          "personal defmacro
+       define a regular macro
+       but also a function that do the same thing as the macro (when receiving quoted args)
+       "
+
+          ([{:as opts :keys [name keys doc meta expansion parse-cases]}]
+           #_(println opts)
+           (let [fname (sym name '-fn)
+                 fname* (sym fname '*)
+                 predname (sym name '-form?)
+                 expname (sym name '-xp)
+                 exprecname (sym name '-xprec)
+                 parser (sym name '-parse)]
+
+             `(do
+
+                ;; pred
+                (defn ~predname [x#]
+                  (and (seq? x#) (= '~name (first x#))))
+
+                ;; parser
+                (defn ~parser [x#]
+                  (apply (fn ~@parse-cases) x#))
+
+                ;; function
+                (defn ~fname
+                  ([{:keys ~keys}] ~expansion)
+                  ([x# & xs#] (~fname (~parser (cons x# xs#)))))
+
+                (def ~fname* (p* ~fname))
+
+                ;; expansion
+                (defn ~expname [x#]
+                  (if (~predname x#)
+                    (~fname* (next x#))
+                    x#))
+
+                (defn ~exprecname [x#]
+                  (cond (~predname x#) (~expname x#)
+                        (sequential? x#) ($ x# ~expname)
+                        :else x#))
+                ;; macro
+                (defmacro ~name [& xs#]
+                  (~fname* xs#)))))
+
+          ([x & xs]
+           `(defmac+ ~(parse-defmac+ (cons x xs)))))
+
+        [:tutorial
+         "defmac+ is letting you define a macro as you may have guessed"
+         ""]
+
+        (comment
+          (mx' (defmac+ iop [a b] (list b a)))
+
+          (mx' (defmac+ dfn [name doc cases]
+                 `(defn ~name ~(or doc "") ~@cases)
+                 ([& xs]
+                  (parse-fn xs))))
+
+          (mx' (defmac+ dfn [name & body]
+                 `(defn ~name ~@body)))
+
+          (dfn hello "says hello" ([] "yo") ([x] (str "hey" x)))
+          (dfn-parse '(hello "says hello" ([] "yo") ([x] (str "hey" x))))
+          ))
+
 (do :xp
 
     (defmacro use!
@@ -990,3 +1210,203 @@
   (m {:a 1} [{:p {:v 1}} [{:m 2 :p {:c 'yes :v (mfn [x] (inc x))}}]])
 
   (mfn? (mfn [x] x)))
+
+(_ :cs-new
+
+   (defn cs_generated-binding-sym? [x]
+     (re-matches #"^((vec)|(seq)|(first)|(map))__[0-9]+$"
+                 (name x)))
+
+   (def cs_prefixes #{"!" "?"})
+
+   (defn cs_pure-prefix? [x]
+     (cs_prefixes (name x)))
+
+   (defn- cs_symbol-prefix [x]
+     (cs_prefixes (subs (name x) 0 1)))
+
+   (defn cs_unprefix-symbol [x]
+     (cond
+       (cs_pure-prefix? x) (gensym)
+       (cs_symbol-prefix x) (n/sym (rest (name x)))
+       :else x))
+
+   (assert
+    (is (cs_unprefix-symbol 'aze)
+        (cs_unprefix-symbol '?aze)
+        (cs_unprefix-symbol '!aze))
+    (nil? (cs_generated-binding-sym? 'aze))
+    (nil? (cs_generated-binding-sym? (gensym "yop")))
+    (cs_generated-binding-sym? 'vec__1234)
+    (cs_generated-binding-sym? 'seq__1234)
+    (cs_generated-binding-sym? 'map__1234)
+    (cs_generated-binding-sym? 'first__1234))
+
+   (defn cs_case
+     [[b1 b2 & bs] e]
+     `(~(let [prefix (cs_symbol-prefix b1)]
+          (cond
+            (cs_generated-binding-sym? b1) `c/let
+            (= "?" prefix) `c/let
+            (= "!" prefix) `when-let!
+            :else `c/when-let))
+       [~(cs_unprefix-symbol b1) ~b2]
+       ~(if bs (cs_case bs e)
+            ;; this wrapping is nescessary for the case e eval to nil
+            [e])))
+
+   (defn cs_form [[x e & xs]]
+     (let [bs (if (vector? x) x [(gensym) x])
+           form (cs_case (destructure bs) e)]
+       (cond
+         (not (seq xs)) form
+         (not (next xs)) `(c/or ~form [~(first xs)]) ;; same thing here
+         :else `(c/or ~form ~(cs_form xs)))))
+
+   (defmacro cs [& xs]
+     `(first ~(cs_form xs)))
+
+   (_ :flat-cs-emitted-or-form
+
+      (defn or-expr? [x]
+        (and (seq? x) (= `c/or (first x))))
+
+      (defn remove-useless-ors [x]
+        (cp x
+            or-expr?
+            (cons `c/or
+                  (mapcat (fn [y]
+                            (mapv remove-useless-ors
+                                  (if (or-expr? y) (rest y) [y])))
+                          (rest x)))
+            holycoll?
+            ($ x remove-useless-ors)
+            x))
+
+      (defmacro cs [& xs]
+        `(first ~(remove-useless-ors (cs_form xs))))
+
+      (_ (let [a 0] ;; feel free to change the value and reevaluate
+           (macroexpand '(cs
+                          (pos? a) :pos
+                          (neg? a) :neg
+                          :zero)))))
+
+   (_ :cs-tuto
+
+      ;; like a normal let
+      (is 3
+          (cs [a 1 b 2] (+ a b)))
+
+      ;; but shorts on nil bindings
+      (is :pouet
+          (cs [a (pos? -1) ;; this line binds 'a to nil,
+               ;; this will shortcircuit the rest of the binding form
+               ;; and jump to the second expression of the body
+               ? (println "never printed")]
+
+              ;; evaluated only in case of successful bindings, skipped in this case
+              (println "never evaluated")
+
+              ;; evaluated when binding form has been shortcircuited
+              (do (println "failure branch taken")
+                  :pouet)))
+
+      ;; symbols prefixed with a question mark (here ?neg-a) can be bound to nil without shortcircuiting
+      (is 3
+          (cs [a 1 b 2
+               ?neg-a (neg? a) ;; this bind neg-a to nil without shortcircuiting
+               a (if neg-a (- a) a)] ;; note that the prefix is removed in further references
+              (+ a b)))              ;;=> 3
+
+      ;; when some binding symbol is prefixed with !, it has to bind to non nil, else it is an error
+      (throws (cs [!a (pos? -1)] :never))
+
+      ;; you can chain several couples of binding-form expression
+      (defn cs_1 [a]
+        ;; the _ symbol has no special meaning here
+        ;; (like in clojure it just means that we do not use the binding)
+        ;; but it still has to be bound to non nil value to succeed
+        (cs [_ (number? a)] {:number a}
+            [_ (string? a)] {:string a}
+            [_ (coll? a)]
+            (cs [_ (empty? a)] :empty
+                [_ (seq? a)] {:seq a}
+                {:coll a})))
+
+      (assert
+       (is (cs_1 1) {:number 1})
+       (is (cs_1 "a") {:string "a"})
+       (is (cs_1 ()) :empty)
+       (is (cs_1 '(1 2)) {:seq '(1 2)})
+       (is (cs_1 [1 2]) {:coll [1 2]}))
+
+      ;; cs_1 works as intended but clearly can be done more concisely with a good old cond
+      ;; but wait, cs macro can also be used like cond!
+
+      ;; if you need only to check something but do not need the return value
+      ;; like we seen in cs_1,  e.g [_ (test? ...)]
+      ;; it seems kind of tiring to do so, so we've introduce a shorthand for this case
+
+      (let [a -42]
+
+        (=
+         ;; normal syntax
+         (cs [_ (pos? a)] a :negative)
+         ;; shorthand syntax (condishpatible)
+         (cs (pos? a) a :negative)))
+
+      ;; as we see it can be use like 'if
+      (cs (pos? -1) :pos :not-pos)
+
+      ;; or when (with only one expression body)
+      (cs (pos? 1) :pos)
+
+      ;; or cond (without the need for the :else thing)
+      (let [a 0] ;; feel free to change the value and reevaluate
+        (cs
+         (pos? a) :pos
+         (neg? a) :neg
+         :zero))
+
+      ;; this kind of unification of if and cond came from arc-lisp,
+      ;; i cannot find a solid argument against it
+
+      ;; we can redefine cs_1 in a more clean way
+      (defn cs_2 [a]
+        (cs (number? a) {:number a}
+            (string? a) {:string a}
+            (coll? a)
+            (cs (empty? a) :empty
+                (seq? a) {:seq a}
+                {:coll a})))
+
+      ;; the thing is that now you can mix condish syntax and condletish syntax
+
+      (defn cs_3 [a]
+        (cs (number? a) [:num a]
+            (symbol? a) [:sym a]
+            (string? a) [:str a]
+            [_ (sequential? a)
+             sa (seq a)]
+            (into
+             [(cs (vector? a) :vec
+                  (list? a) :lst
+                  :seq)]
+             (map cs_3 sa))
+            [(type a) a]))
+
+      (is (cs_3 [1 2 "aze" 'rt '(42 :iop a) {:a 1}])
+          [:vec
+           [:num 1]
+           [:num 2]
+           [:str "aze"]
+           [:sym 'rt]
+           [:lst [:num 42] [clojure.lang.Keyword :iop] [:sym 'a]]
+           [clojure.lang.PersistentArrayMap {:a 1}]])
+
+      )
+
+   #_(destructure '[[x y z & xs] y])
+   #_(mx*' (cs [[x & xs] (range 1)] [x xs] :nop))
+   )
