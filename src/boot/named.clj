@@ -111,7 +111,7 @@
 
 (def str (builder str0))
 (def sym (builder sym0))
-(def kw (builder key0))
+(def kw (builder kw0))
 
 (def dotstr (builder str0 "."))
 (def dotsym (builder sym0 "."))

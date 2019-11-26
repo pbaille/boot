@@ -118,7 +118,6 @@
 
 (do :base-macros
 
-
     #_(defn parse-fn [[fst & nxt :as all]]
 
       (let [[name fst & nxt]
@@ -666,17 +665,22 @@
             (map? x) (:as x)
             (sym? x) x))
 
+        (defn fn->guard [f]
+          (fn [x & xs]
+            (when (apply f x xs) x)))
+
         (defmac guard
           "same as 'fn, but when evaluate to a truthy value, returns the first argument unchanged"
-          [& body]
-          (let [{:keys [meta doc cases name]} (parse-fn body)]
-            `(fn ~name
-               ~@(map (fn [[argv & body]]
-                        `(~argv ~@(butlast body)
-                          (when ~(last body)
-                            ~(assert {"first argument of a guard has to be bound (for destructuring patterns, use :as)"
-                                      (argument-symbol (first argv))}))))
-                      cases))))
+          ([x] `(fn->guard ~x))
+          ([x & xs]
+           (let [{:keys [meta doc cases name]} (parse-fn (cons x xs))]
+             `(fn ~name
+                ~@(map (fn [[argv & body]]
+                         `(~argv ~@(butlast body)
+                           (when ~(last body)
+                             ~(assert {"first argument of a guard has to be bound (for destructuring patterns, use :as)"
+                                       (argument-symbol (first argv))}))))
+                       cases)))))
 
         (defmac guard_
           [& body]
@@ -714,6 +718,8 @@
       #_(pp xs)
       (apl (first xs) (rest xs)))
 
+    (defn flip [f] #(f %2 %1))
+
     (defn word? [x]
       (c/or (sym? x) (kw? x)))
 
@@ -725,7 +731,7 @@
       (c/or (seq? x) (vec? x)
             (set? x) (holymap? x)))
 
-    (defn guard [f]
+    #_(defn guard [f]
       (fn [x & xs]
         (when (apply f x xs) x))))
 
@@ -1004,113 +1010,113 @@
 
 (do :defmac+
 
-        (defn parse-defmac+ [[name & [x & xs]]]
-          (let [[doc [x & xs]] (if (string? x) [x xs] ["no doc" (cons x xs)])
-                [meta [keys expansion & xs]] (if (map? x) [x xs] [{} (cons x xs)])
-                parse-cases (cond (seq? (first xs)) xs
-                                  (second xs) (list xs)
-                                  :else
-                                  (let [argv (or (first xs) keys)
-                                        ss (shadows argv)]
-                                    [(list argv (zipmap (map keyword ss) ss))]))]
-            {:doc doc
-             :meta meta
-             :name name
-             :keys (vec (shadows keys))
-             :expansion expansion
-             :parse-cases parse-cases}))
+    (defn parse-defmac+ [[name & [x & xs]]]
+      (let [[doc [x & xs]] (if (string? x) [x xs] ["no doc" (cons x xs)])
+            [meta [keys expansion & xs]] (if (map? x) [x xs] [{} (cons x xs)])
+            parse-cases (cond (seq? (first xs)) xs
+                              (second xs) (list xs)
+                              :else
+                              (let [argv (or (first xs) keys)
+                                    ss (shadows argv)]
+                                [(list argv (zipmap (map keyword ss) ss))]))]
+        {:doc doc
+         :meta meta
+         :name name
+         :keys (vec (shadows keys))
+         :expansion expansion
+         :parse-cases parse-cases}))
 
-        (do :asserts
-            (is (parse-defmac+ '(iop [a b c & xs] (pouet)))
-                '{:doc "no doc",
-                  :meta {},
-                  :name iop,
-                  :keys [a xs c b],
-                  :expansion (pouet),
-                  :parse-cases [([a b c & xs] {:a a, :xs xs, :c c, :b b})]})
-            (is (parse-defmac+ '(iop [a b c xs] (pouet) [b a c & xs]))
-                '{:doc "no doc",
-                  :meta {},
-                  :name iop,
-                  :keys [a xs c b],
-                  :expansion (pouet),
-                  :parse-cases [([b a c & xs] {:a a, :xs xs, :c c, :b b})]})
-            (is (parse-defmac+ '(iop "foo" {:me :ta} [a b c] (pouet) ([x] 'iop) ([x & xs] 'pouet)))
-                '{:doc "foo",
-                  :meta {:me :ta},
-                  :name iop,
-                  :keys [a c b],
-                  :expansion (pouet),
-                  :parse-cases (([x] 'iop) ([x & xs] 'pouet))}))
+    (do :asserts
+        (is (parse-defmac+ '(iop [a b c & xs] (pouet)))
+            '{:doc "no doc",
+              :meta {},
+              :name iop,
+              :keys [a xs c b],
+              :expansion (pouet),
+              :parse-cases [([a b c & xs] {:a a, :xs xs, :c c, :b b})]})
+        (is (parse-defmac+ '(iop [a b c xs] (pouet) [b a c & xs]))
+            '{:doc "no doc",
+              :meta {},
+              :name iop,
+              :keys [a xs c b],
+              :expansion (pouet),
+              :parse-cases [([b a c & xs] {:a a, :xs xs, :c c, :b b})]})
+        (is (parse-defmac+ '(iop "foo" {:me :ta} [a b c] (pouet) ([x] 'iop) ([x & xs] 'pouet)))
+            '{:doc "foo",
+              :meta {:me :ta},
+              :name iop,
+              :keys [a c b],
+              :expansion (pouet),
+              :parse-cases (([x] 'iop) ([x & xs] 'pouet))}))
 
-        (defmacro defmac+
+    (defmacro defmac+
 
-          "personal defmacro
+      "personal defmacro
        define a regular macro
        but also a function that do the same thing as the macro (when receiving quoted args)
        "
 
-          ([{:as opts :keys [name keys doc meta expansion parse-cases]}]
-           #_(println opts)
-           (let [fname (sym name '-fn)
-                 fname* (sym fname '*)
-                 predname (sym name '-form?)
-                 expname (sym name '-xp)
-                 exprecname (sym name '-xprec)
-                 parser (sym name '-parse)]
+      ([{:as opts :keys [name keys doc meta expansion parse-cases]}]
+       #_(println opts)
+       (let [fname (sym name '-fn)
+             fname* (sym fname '*)
+             predname (sym name '-form?)
+             expname (sym name '-xp)
+             exprecname (sym name '-xprec)
+             parser (sym name '-parse)]
 
-             `(do
+         `(do
 
-                ;; pred
-                (defn ~predname [x#]
-                  (and (seq? x#) (= '~name (first x#))))
+            ;; pred
+            (defn ~predname [x#]
+              (and (seq? x#) (= '~name (first x#))))
 
-                ;; parser
-                (defn ~parser [x#]
-                  (apply (fn ~@parse-cases) x#))
+            ;; parser
+            (defn ~parser [x#]
+              (apply (fn ~@parse-cases) x#))
 
-                ;; function
-                (defn ~fname
-                  ([{:keys ~keys}] ~expansion)
-                  ([x# & xs#] (~fname (~parser (cons x# xs#)))))
+            ;; function
+            (defn ~fname
+              ([{:keys ~keys}] ~expansion)
+              ([x# & xs#] (~fname (~parser (cons x# xs#)))))
 
-                (def ~fname* (p* ~fname))
+            (def ~fname* (p* ~fname))
 
-                ;; expansion
-                (defn ~expname [x#]
-                  (if (~predname x#)
-                    (~fname* (next x#))
-                    x#))
+            ;; expansion
+            (defn ~expname [x#]
+              (if (~predname x#)
+                (~fname* (next x#))
+                x#))
 
-                (defn ~exprecname [x#]
-                  (cond (~predname x#) (~expname x#)
-                        (sequential? x#) ($ x# ~expname)
-                        :else x#))
-                ;; macro
-                (defmacro ~name [& xs#]
-                  (~fname* xs#)))))
+            (defn ~exprecname [x#]
+              (cond (~predname x#) (~expname x#)
+                    (sequential? x#) ($ x# ~expname)
+                    :else x#))
+            ;; macro
+            (defmacro ~name [& xs#]
+              (~fname* xs#)))))
 
-          ([x & xs]
-           `(defmac+ ~(parse-defmac+ (cons x xs)))))
+      ([x & xs]
+       `(defmac+ ~(parse-defmac+ (cons x xs)))))
 
-        [:tutorial
-         "defmac+ is letting you define a macro as you may have guessed"
-         ""]
+    [:tutorial
+     "defmac+ is letting you define a macro as you may have guessed"
+     ""]
 
-        (comment
-          (mx' (defmac+ iop [a b] (list b a)))
+    (comment
+      (mx' (defmac+ iop [a b] (list b a)))
 
-          (mx' (defmac+ dfn [name doc cases]
-                 `(defn ~name ~(or doc "") ~@cases)
-                 ([& xs]
-                  (parse-fn xs))))
+      (mx' (defmac+ dfn [name doc cases]
+             `(defn ~name ~(or doc "") ~@cases)
+             ([& xs]
+              (parse-fn xs))))
 
-          (mx' (defmac+ dfn [name & body]
-                 `(defn ~name ~@body)))
+      (mx' (defmac+ dfn [name & body]
+             `(defn ~name ~@body)))
 
-          (dfn hello "says hello" ([] "yo") ([x] (str "hey" x)))
-          (dfn-parse '(hello "says hello" ([] "yo") ([x] (str "hey" x))))
-          ))
+      (dfn hello "says hello" ([] "yo") ([x] (str "hey" x)))
+      (dfn-parse '(hello "says hello" ([] "yo") ([x] (str "hey" x))))
+      ))
 
 (do :xp
 
@@ -1212,6 +1218,10 @@
   (mfn? (mfn [x] x)))
 
 (_ :cs-new
+
+   (defonce bind-ops
+     (atom
+      {}))
 
    (defn cs_generated-binding-sym? [x]
      (re-matches #"^((vec)|(seq)|(first)|(map))__[0-9]+$"
@@ -1349,7 +1359,6 @@
       ;; it seems kind of tiring to do so, so we've introduce a shorthand for this case
 
       (let [a -42]
-
         (=
          ;; normal syntax
          (cs [_ (pos? a)] a :negative)

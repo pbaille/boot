@@ -8,6 +8,10 @@
 
 (p/use!)
 
+;; the intent here is to provide a mecanism that permits the definition of subnamespaces
+;; In clojure, the common practice is to define one namespace per file, along with an isomorphic (I use fancy words) folder structure.
+;; It's annoying me sometimes so I've done this
+
 (do :nsub
 
     (defmac+ nsub
@@ -18,6 +22,8 @@
             ns-sym (n/dotsym ns ctx)
             [ns-body decls] (split-with (comp keyword? first) body)]
 
+        ;; we have to keep track of subnamespaces in order to be able to know to which toplevel namespace they belong
+        ;; this way, when we will patch core/ns, we will be able to require recursively subnamespaces along with the required namespace
         (swap! st/state
                #(-> %
                     (assoc-in [:namespaces fullname] #{})
@@ -71,38 +77,8 @@
          (aze/bop)
          (= "value module" aze/lou))))
 
-(_
- (refer-clojure :exclude '[get])
- (use 'boot.prelude)
-
- 
-
- (ns aze
-   (:require [boot.prelude :as p]))
-
- (p/use!)
-
- (or [true nil] :io)
-
- (require '[boot.prelude :as p])
- (doseq [s '[assert not-empty empty or and cat]]
-   (ns-unmap *ns* s))
- (ns-map *ns*)
- (p/use!))
-
-(do :def
-
-    (defn duf
-      [{:keys [ns prefix name doc meta body]}]
-      (if prefix
-        `(nsub ~prefix (def ~name (do ~@body)))
-        `(def ~name (do ~@body))
-        ))
-
-    (comment
-      (eval (duf {:name 'foo :body [42]}))
-      (eval (duf {:prefix 'foo.bar :name 'baz :body [42]}))
-      ))
+;; The annoying thing with this is that if you require this namespace from elsewhere, only the top level namespace will be required
+;; so I had to patch core/ns to behave in a way that requiring a namespace containing sub namespaces also requires subnamespaces aliased with the correct prefix
 
 (_ :ns
 
@@ -138,8 +114,10 @@
                compile-element
                xs))))
 
+    ;; we keep a copy of the core/ns initial implementation
     (defonce ns-impl @#'ns)
 
+    ;; we wrap it with our custom require 
     (alter-var-root
      #'clojure.core/ns
      (fn [_]
@@ -158,6 +136,41 @@
 
       (macroexpand '(ns bop
                       (:require [boot.nsub :as pop])))))
+
+(_
+ (refer-clojure :exclude '[get])
+ (use 'boot.prelude)
+
+ 
+
+ (ns aze
+   (:require [boot.prelude :as p]))
+
+ (p/use!)
+
+ (or [true nil] :io)
+
+ (require '[boot.prelude :as p])
+ (doseq [s '[assert not-empty empty or and cat]]
+   (ns-unmap *ns* s))
+ (ns-map *ns*)
+ (p/use!))
+
+(do :def
+
+    (defn duf
+      [{:keys [ns prefix name doc meta body]}]
+      (if prefix
+        `(nsub ~prefix (def ~name (do ~@body)))
+        `(def ~name (do ~@body))
+        ))
+
+    (comment
+      (eval (duf {:name 'foo :body [42]}))
+      (eval (duf {:prefix 'foo.bar :name 'baz :body [42]}))
+      ))
+
+
 
 
 
