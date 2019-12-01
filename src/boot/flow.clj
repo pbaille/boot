@@ -21,7 +21,7 @@
 
 (do :impl
 
-    (declare trans step)
+    (declare trans step_)
 
     (defn vec->trans [v]
       (let [ts (map trans v)]
@@ -31,7 +31,7 @@
       (fn [x]
         (l/mut x
                (key e)
-               #(step % (val e)))))
+               (step_ (val e)))))
 
     (defn map->trans [m]
       (vec->trans (mapv link->trans m))))
@@ -50,7 +50,7 @@
 
 ;; flow
 
-(defn step [x y]
+(defn+ step [x y]
   (if (satisfies? ICombine x)
     (combine x y)
     ((trans y) x)))
