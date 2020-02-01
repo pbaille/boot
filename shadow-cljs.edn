@@ -1,0 +1,10 @@
+{:deps {:aliases [:shadow]}
+ :nrepl {:port 8888}
+ :http {:port 1234}
+ :dev-http {8080 "resources/public/"}
+ :socket-repl {:port 9000}
+ :builds
+ {:app {:target :browser
+        :output-dir "resources/public/js"
+        :asset-path "/js"
+        :modules {:main {:entries [boot.generics]}}}}}

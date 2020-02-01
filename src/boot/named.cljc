@@ -2,7 +2,8 @@
   (:refer-clojure :exclude [cat str])
   (:require [clojure.string :as s]
             [clojure.core :as c]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  #?(:cljs (:require-macros [boot.named :refer [nfn defnf]])))
 
 ;; casting --------------------------------------------------------
 
@@ -19,14 +20,17 @@
        (symbol? x)  (symbol ret)
        (keyword? x) (keyword ret)))))
 
-(defmacro nfn
-  ([e]
-   `(nfn [~'_] ~e))
-  ([argv & body]
-   `(nswap (fn ~argv ~@body))))
+#?(:clj
+   (do
 
-(defmacro defnf [n & form]
-  `(def ~n (nfn ~@form)))
+     (defmacro nfn
+       ([e]
+        `(nfn [~'_] ~e))
+       ([argv & body]
+        `(nswap (fn ~argv ~@body))))
+
+     (defmacro defnf [n & form]
+       `(def ~n (nfn ~@form)))))
 
 ;; cases ----------------------------------------------------------
 ;; from funcool.cuerdas
@@ -36,12 +40,12 @@
   (let [re1 (re-pattern "(\\p{Lu}+[\\p{Ll}\\u0027\\p{Ps}\\p{Pe}]*)")
         re2 (re-pattern "[^\\p{L}\\p{N}\\u0027\\p{Ps}\\p{Pe}]+")]
     (println "a"(some-> s
-                     (name)
-                     (s/replace re1 "-$1")))
+                        (name)
+                        (s/replace re1 "-$1")))
     (println "b"(some-> s
-                     (name)
-                     (s/replace re1 "-$1")
-                     (s/split re2)))
+                        (name)
+                        (s/replace re1 "-$1")
+                        (s/split re2)))
     (some-> s
             (name)
             (s/replace re1 "-$1")
@@ -83,8 +87,8 @@
         (sequential? x) (mapcat name-seq x)))
 
 (defnf cat
-  [x & xs]
-  (apply c/str (name-seq (cons x xs))))
+       [x & xs]
+       (apply c/str (name-seq (cons x xs))))
 
 (defn split
   ([x]
@@ -103,7 +107,7 @@
        (cat empty xs)))))
 
 (defnf join [sep x]
-  (str/join sep (name-seq x)))
+       (str/join sep (name-seq x)))
 
 (def str0 "")
 (def sym0 (symbol str0))
@@ -116,4 +120,6 @@
 (def dotstr (builder str0 "."))
 (def dotsym (builder sym0 "."))
 (def dotkey (builder kw0 "."))
+
+
 
