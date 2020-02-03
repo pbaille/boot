@@ -10,11 +10,5 @@ features:
 
 ** Get started 
 
-Add this to your deps:
-
-=pbaille/boot {:mvn/version "0.1.1-SNAPSHOT"}=
-
-from one of your namespaces:
-
-=(:require [boot.core :refer [deft defg defm]])=
+Do not !
 
