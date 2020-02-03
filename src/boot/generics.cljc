@@ -232,8 +232,8 @@
             (mapcat (fn [n] [(arify-name mname n) (arify-name pname n)])
                     arities)]
         `(do
-           ~@(map (fn [x#] `(ns-unmap '~(symbol (str *ns*)) '~x#))
-                  (cons name arified-names)))))
+           ~@(mapv (fn [x#] `(ns-unmap '~(symbol (str *ns*)) '~x#))
+                   (cons name arified-names)))))
 
     (defn declaration-form [spec]
       #_(println p/*cljs*)
@@ -336,6 +336,7 @@
 
          (if (get (get-reg) name)
            `(generic+ ~name ~@(impl-body->cases tag body))
+           ;; TODO do I want to restore that ? it does not works well with refreshing
            (if-let [p (-> (resolve name) meta :protocol)]
              (identity ; p/pprob 'implement-raw-proto p/*cljs*
                `(extend-protocol ~(symbol p)
@@ -346,10 +347,7 @@
                  [tag & impls]
                  `(do ~@(mapv #(implement tag %) impls)))
 
-       (p/defmac cljs? [] (println p/*cljs*) [:cljs p/*cljs*])
-       #_(defmacro cljs? [] (binding [p/*cljs* (:ns &env)] (println "cljs?: " p/*cljs*) :iop))
 
-       (macroexpand '(p/defmac cljs? [] (list p/*cljs*)))
        ))
 
 (generic g1 [x]
@@ -465,34 +463,33 @@
 
 ;; type+ is like extendtype
 ;; implement several generics at a time for a given type
-(comment
-  (type+ :fun
-         (g1 [x] :g1fun)
-         (g2 [x y] [:g2fun2 x y]))
 
-  (p/assert
-    (= [:g2fun2 inc 1] (g2 inc 1))
-    (= :g1fun (g1 (fn [a]))))
+(type+ :fun
+       (g1 [x] :g1fun)
+       (g2 [x y] [:g2fun2 x y]))
 
-  ;; the implementations given to type+ does not have to be asparagus generics,
-  ;; it can be regular clojure protocols functions
-  ;; CAUTION: it will not reflect type hierarchy further changes as with generics
+(p/assert
+  (= [:g2fun2 inc 1] (g2 inc 1))
+  (= :g1fun (g1 (fn [a]))))
 
-  (defprotocol Prot1 (prot1-f [x] [x y]))
+;; the implementations given to type+ does not have to be asparagus generics,
+;; it can be regular clojure protocols functions
+;; CAUTION: it will not reflect type hierarchy further changes as with generics
 
-  (meta (resolve 'prot1-f))
-  (println "heloo")
+(defprotocol Prot1 (prot1-f [x] [x y]))
 
-  (type+ :fun
-         (g1 [x] :g1fun)
-         (g2 [x y] [:g2fun2 x y])
-         ;; a raw protocol function
-         (prot1-f ([x] "prot1-f fun")
-                  ([x y] "prot1-f fun arity 2"))) ;; <- here;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
+(meta (resolve 'prot1-f))
 
-  (p/assert
-    (= "prot1-f fun" (prot1-f inc))
-    (= "prot1-f fun arity 2" (prot1-f inc 42))))
+(type+ :fun
+       (g1 [x] :g1fun)
+       (g2 [x y] [:g2fun2 x y])
+       ;; a raw protocol function
+       (prot1-f ([x] "prot1-f fun")
+                ([x y] "prot1-f fun arity 2"))) ;; <- here;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
+
+(p/assert
+  (= "prot1-f fun" (prot1-f inc))
+  (= "prot1-f fun arity 2" (prot1-f inc 42)))
 
 
 #_(p/error "stop")

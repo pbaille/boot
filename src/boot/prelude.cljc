@@ -7,9 +7,12 @@
     [clojure.set :as set]
     [boot.named :as n]
     [#?(:cljs cljs.pprint :clj clojure.pprint) :as pp]
-    [clojure.walk :as walk])
+    [clojure.walk :as walk]
+    [#?(:cljs cljs.test :clj clojure.test) :as test])
   #?(:cljs (:require-macros
              [boot.prelude :refer [#_error or and cp cs assert is _ defmac]])))
+
+(def iop "iop")
 
 #?(:cljs (enable-console-print!))
 
@@ -130,44 +133,44 @@
                (catch ClassNotFoundException _
                  sym))))))
 
+(defn parse-fn [[fst & nxt :as all]]
+
+  (let [[name fst & nxt]
+        (if (symbol? fst)
+          (cons fst nxt)
+          (concat [nil fst] nxt))
+
+        [doc fst & nxt]
+        (if (string? fst)
+          (cons fst nxt)
+          (concat ["" fst] nxt))
+
+        [meta fst & nxt]
+        (if (map? fst)
+          (cons fst nxt)
+          (concat [{} fst] nxt))
+
+        impls
+        (if (vector? fst)
+          {fst (vec nxt)}
+          (into {}
+                (map
+                  (c/fn [[args & body]]
+                    [args (vec body)])
+                  (cons fst nxt))))]
+
+    {:meta meta
+     :name (c/or name (gensym))
+     :name? name
+     :doc doc
+     :impls impls
+     :cases (mapv (p* list*) impls)}))
+
 #?(:clj
 
    (do :base-macros
 
        (declare error)
-
-       (defn parse-fn [[fst & nxt :as all]]
-
-         (let [[name fst & nxt]
-               (if (symbol? fst)
-                 (cons fst nxt)
-                 (concat [nil fst] nxt))
-
-               [doc fst & nxt]
-               (if (string? fst)
-                 (cons fst nxt)
-                 (concat ["" fst] nxt))
-
-               [meta fst & nxt]
-               (if (map? fst)
-                 (cons fst nxt)
-                 (concat [{} fst] nxt))
-
-               impls
-               (if (vector? fst)
-                 {fst (vec nxt)}
-                 (into {}
-                       (map
-                         (c/fn [[args & body]]
-                           [args (vec body)])
-                         (cons fst nxt))))]
-
-           {:meta meta
-            :name (c/or name (gensym))
-            :name? name
-            :doc doc
-            :impls impls
-            :cases (mapv (p* list*) impls)}))
 
        (defmacro defmac
          "personal defmacro
@@ -193,37 +196,37 @@
                   ~@(map with-cljs-binding cases)))))
 
        #_(defmacro error
-         "there is no reason for this being a macro"
-         [& xs]
-         `(throw (new #_js/Error
-                   ~(if (:ns &env)
-                      'js/Error
-                      'Exception)
-                   ~(apply str xs))))
+           "there is no reason for this being a macro"
+           [& xs]
+           `(throw (new #_js/Error
+                     ~(if (:ns &env)
+                        'js/Error
+                        'Exception)
+                     ~(apply str xs))))
 
        (defmac marked-fn
 
-               "marked function,
-                define an anonymous form (like fn)
-                a def form (like defn)
-                and a predicate function (like fn?)"
+         "marked function,
+          define an anonymous form (like fn)
+          a def form (like defn)
+          and a predicate function (like fn?)"
 
-               [name & [doc]]
+         [name & [doc]]
 
-               `(do
+         `(do
 
-                  (defmac ~name
-                          [& body#]
-                          (let [parsed# (parse-fn body#)]
-                            `(with-meta
-                               (fn ~(c/or (:name parsed#) (gensym)) ~@(:cases parsed#))
-                               {~~(keyword name) true})))
+            (defmac ~name
+                    [& body#]
+                    (let [parsed# (parse-fn body#)]
+                      `(with-meta
+                         (fn ~(c/or (:name parsed#) (gensym)) ~@(:cases parsed#))
+                         {~~(keyword name) true})))
 
-                  (defn ~(sym name "?") [x#]
-                    (when (-> x# meta ~(keyword name)) x#))
+            (defn ~(sym name "?") [x#]
+              (when (-> x# meta ~(keyword name)) x#))
 
-                  (defmac ~(sym 'def name) [name'# & body#]
-                          `(def ~name'# (~'~name ~@body#)))))
+            (defmac ~(sym 'def name) [name'# & body#]
+                    `(def ~name'# (~'~name ~@body#)))))
 
        (defmac import-macros [x y & nxt]
                `(do (def ~x (var ~y))
@@ -271,6 +274,16 @@
                     string? "iop"
                     :nop))
           )
+
+       (defn error-form [& xs]
+         `(throw (new ~(if *cljs* 'js/Error 'Exception) (~'str ~@xs))))
+
+       (defmacro is [x & xs]
+         `(do (test/is ~x)
+              (test/is (~'= ~x ~@xs))))
+
+       (defmacro isnt [x & xs]
+         `(test/is (~'= nil ~x ~@xs)))
 
        (defmacro let-dbg [bs & bod]
          `(let ~(vec (mapcat (fn [[p e]] [p `(prob '~p ~e)]) (partition 2 bs)))
@@ -716,10 +729,10 @@
             (set? x) (holymap? x)))
 
     (defn error [& xs]
-        (throw (new #_js/Error
-                 #?(:cljs js/Error
-                    :clj  Exception)
-                 (str* xs))))
+      (throw (new #_js/Error
+               #?(:cljs js/Error
+                  :clj  Exception)
+               (str* xs))))
 
     #_(defn guard [f]
         (fn [x & xs]
@@ -936,21 +949,21 @@
 
     (comment :split-at-xp
 
-       (defn split-at
-         ([x idx] (split-at x idx []))
-         ([x idx acc]
-          (if (zero? idx) [acc x]
-                          (recur (rest x) (dec idx) (conj acc (first x))))))
+             (defn split-at
+               ([x idx] (split-at x idx []))
+               ([x idx acc]
+                (if (zero? idx) [acc x]
+                                (recur (rest x) (dec idx) (conj acc (first x))))))
 
-       (time (dotimes [_ 100000]
-               (let [[pre post] (c/split-at 42 (range 100))]
-                 [(doall pre) (doall post)]))) ;; 602ms
+             (time (dotimes [_ 100000]
+                     (let [[pre post] (c/split-at 42 (range 100))]
+                       [(doall pre) (doall post)]))) ;; 602ms
 
-       ;; a little faster
-       (time (dotimes [_ 100000]
-               (let [[pre post] (split-at (range 100) 42)]
-                 [(doall pre) (doall post)]))) ;; 502ms
-       ))
+             ;; a little faster
+             (time (dotimes [_ 100000]
+                     (let [[pre post] (split-at (range 100) 42)]
+                       [(doall pre) (doall post)]))) ;; 502ms
+             ))
 
 #?(:clj
    (do :expand
@@ -1106,14 +1119,23 @@
 
 (do :xp
 
-    (defmacro use!
-      "the purpose of this is to be able to 'use' this ns without do the :refer-clojure :exclude boilerplate
-       but this does not works :)"
-      []
-      `(do
-         (doseq [s# '~'[assert not-empty empty or and cat]]
-           (ns-unmap *ns* s#))
-         (use '~'boot.prelude))))
+    #?(:clj (defmacro use!
+              "the purpose of this is to be able to 'use' this ns without do the :refer-clojure :exclude boilerplate
+               but this does not works :)"
+              []
+              `(do
+                 ~@(mapv (fn [x#] `(ns-unmap '~(symbol (str *ns*)) '~x#))
+                         '[assert not-empty empty or and cat])
+                 ~(if (:ns &env)
+                    (let [;_ (println "use!" (ns-map 'boot.prelude))
+                          nsm (ns-publics 'boot.prelude)
+                          macros (vec (keys (filter (comp :macro meta val) nsm)))
+                          funs (vec (keys (remove (comp :macro meta val) nsm)))]
+                      #_(println macros funs)
+                      `(do (cljs.core/require '[~'boot.prelude :refer ~funs])
+                           (cljs.core/require-macros '[~'boot.prelude :refer ~macros])))
+                    `(use '~'boot.prelude))
+                 ))))
 
 (comment
 

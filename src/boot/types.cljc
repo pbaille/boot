@@ -54,7 +54,7 @@
 
         (def cljs-atoms
           (cmap
-            :fun 'Fn
+            :fun 'function
             :num 'number
             :str 'string
             :sym 'Symbol

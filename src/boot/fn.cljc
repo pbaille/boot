@@ -1,7 +1,8 @@
 (ns boot.fn
-  (:refer-clojure :exclude [fn defn fn? compile]))
-
-(alias 'c 'clojure.core)
+  (:refer-clojure :exclude [fn defn fn? compile])
+  (:require #?(:clj  [clojure.core :as c]
+               :cljs [cljs.core :as c]))
+  #?(:cljs (:require-macros [boot.fn :refer [fn defn]])))
 
 (c/defn conform [[fst & nxt :as all]]
 
@@ -46,7 +47,7 @@
 
   (conform
     '(([b] b)
-       ([a b] (/ a (+ a b)))))
+      ([a b] (/ a (+ a b)))))
 
   (conform
     '(yop [b] b))
@@ -65,14 +66,14 @@
           ([b] b)
           ([a b] (/ a (+ a b))))))
 
-(defmacro fn [& form]
-  (let [locals (keys &env)
-        {:keys [impls name default-name] :as met} (conform form)]
-    `(with-meta (~'clojure.core/fn ~(or name default-name) ~@(map (partial apply list*) impls))
-                (assoc '~met
-                  :type 'fn
-                  :code '~&form
-                  :locals (zipmap '~locals ~(vec locals))))))
+#?(:clj (defmacro fn [& form]
+          (let [locals (when-not (:ns &env) (keys &env)) ;; in cljs locals are ultra verbose we skip it for now
+                {:keys [impls name default-name] :as met} (conform form)]
+            `(with-meta (~'clojure.core/fn ~(or name default-name) ~@(map (partial apply list*) impls))
+                        (assoc '~met
+                          :type 'fn
+                          :code '~&form
+                          :locals (zipmap '~locals ~(vec locals)))))))
 
 (comment
   (macroexpand '(fn [b] b))
@@ -99,26 +100,26 @@
   (fn [b] b)
 
   (meta (fn ([b] b)
-             ([a b] (/ a (+ a b)))))
+            ([a b] (/ a (+ a b)))))
 
   (meta (fn yop [b] b))
 
   (meta (fn yop
-             ([b] b)
-             ([a b] (/ a (+ a b)))))
+            ([b] b)
+            ([a b] (/ a (+ a b)))))
 
   (meta (fn yop {:foo :bar}
-             [b] b))
+            [b] b))
 
-  (meta )
+  (meta)
 
   (meta (fn yop {:foo :bar}
-             ([b] b)
-             ([a b] (/ a (+ a b))))))
+            ([b] b)
+            ([a b] (/ a (+ a b))))))
 
-(defmacro defn [& form]
-  (let [{:keys [name]} (conform form)]
-    `(def ~name (fn ~@form))))
+#?(:clj (defmacro defn [& form]
+          (let [{:keys [name]} (conform form)]
+            `(def ~name (fn ~@form)))))
 
 (c/defn fn? [x]
   (-> x meta :type (= 'fn)))
@@ -154,15 +155,10 @@
       :else code)))
 
 ;define getters
-(eval
-  `(do
-     ~@(map
-         (c/fn [x]
-           `(~'def ~x #(-> % meta ~(keyword (name x)))))
-         '[impls
-           code
-           doc
-           locals])))
+(c/defn impls [x] (-> x meta :impls))
+(c/defn code [x] (-> x meta :code))
+(c/defn doc [x] (-> x meta :doc))
+(c/defn locals [x] (-> x meta :locals))
 
 (c/defn arity-map [f]
   (into {}
@@ -237,11 +233,18 @@
       (split-at maxa args))))
 
 ;; not compatible with cljs
-(defmethod print-method clojure.lang.Fn [f w]
-  (print-method (show f) w))
-
-(defmethod print-method clojure.lang.AFunction [f w]
-  (print-method (show f) w))
+#?(:clj  (do (defmethod print-method clojure.lang.Fn [f w]
+               (print-method (show f) w))
+             (defmethod print-method clojure.lang.AFunction [f w]
+               (print-method (show f) w)))
+   :cljs (do (extend-protocol c/IPrintWithWriter
+               function
+               (-pr-writer [f w _]
+                 (c/write-all w (show f))))
+             (extend-protocol c/IPrintWithWriter
+               c/MetaFn
+               (-pr-writer [f w _]
+                 (c/write-all w (show f))))))
 
 (c/defn locals->bindings [f]
   (vec (mapcat identity (locals f))))
@@ -258,78 +261,80 @@
 (comment
   (eval (form (let [e 1] (fn [a b] 1 2 3)))))
 
-(defn- compile [f]
-  (println "compile: " (form f))
-  (eval (form f)))
+(comment :recompilation-experimental
+         (defn- compile [f]
+           (println "compile: " (form f))
+           (eval (form f)))
 
-(comment
-  (form (fn [c] (+ c c)))
-  (form
-    (compile
-      (let [a 1]
-        (fn [b] (fn [c] (+ a b c)))))))
+         (comment
+           (form (fn [c] (+ c c)))
+           (form
+             (compile
+               (let [a 1]
+                 (fn [b] (fn [c] (+ a b c)))))))
 
-(c/defn swap-impls [f g & args]
-  (compile
-    (vary-meta f update :impls #(apply g % args))))
+         (c/defn swap-impls [f g & args]
+           (compile
+             (vary-meta f update :impls #(apply g % args))))
 
-(c/defn set-impls [f xs]
-  (compile
-    (vary-meta f assoc :impls xs)))
+         (c/defn set-impls [f xs]
+           (compile
+             (vary-meta f assoc :impls xs)))
 
-(c/defn merge-impls [fun imap]
-  (let [overloaded-arities (set (map count (keys imap)))
-        remaining-impls
-        (into {}
-              (remove
-                (c/fn [[args _]]
-                  (overloaded-arities (count args)))
-                (-> fun meta :impls)))]
-    (set-impls fun (merge remaining-impls imap))))
+         (c/defn merge-impls [fun imap]
+           (let [overloaded-arities (set (map count (keys imap)))
+                 remaining-impls
+                 (into {}
+                       (remove
+                         (c/fn [[args _]]
+                           (overloaded-arities (count args)))
+                         (-> fun meta :impls)))]
+             (set-impls fun (merge remaining-impls imap))))
 
-(comment
-  (let [f (fn [a] a)
-        f2 (set-impls f {'[a] ['(+ a a)]})
-        ;; this will cause an error...
-        f3 (let [c 4] (swap-impls f merge '{[a b] [(+ a b c)]}))
-        f4 (merge-impls f3 '{[z] [(+ 1 z)]
-                             [c d] [(* c d)]})
-        ]
-    [f
-     (f 1)
-     f2
-     (f2 1)
-     f3
-     (f3 1)
-     (f3 2 3)
-     f4
-     (f4 1)
-     (f4 3 3)
-     ]))
+         (comment
+           (let [f (fn [a] a)
+                 f2 (set-impls f {'[a] ['(+ a a)]})
+                 ;; this will cause an error...
+                 f3 (let [c 4] (swap-impls f merge '{[a b] [(+ a b c)]}))
+                 f4 (merge-impls f3 '{[z] [(+ 1 z)]
+                                      [c d] [(* c d)]})
+                 ]
+             [f
+              (f 1)
+              f2
+              (f2 1)
+              f3
+              (f3 1)
+              (f3 2 3)
+              f4
+              (f4 1)
+              (f4 3 3)
+              ]))
 
-(def method-map
-  {:variadic? variadic?
-   :polyadic? polyadic?
-   :arity arity
-   :arity-map arity-map
-   :compile compile
-   :swap-impls swap-impls
-   :set-impls set-impls})
+         (def method-map
+           {:variadic? variadic?
+            :polyadic? polyadic?
+            :arity arity
+            :arity-map arity-map
+            :compile compile
+            :swap-impls swap-impls
+            :set-impls set-impls})
 
-(comment
-  (let [x 1]
-    ((c/fn f [a]
-       (locals
-         (fn g [b] [f (+ x a)])))
-      1)
-    )
+         (comment
+           (let [x 1]
+             ((c/fn f [a]
+                (locals
+                  (fn g [b] [f (+ x a)])))
+              1)
+             )
 
-  (c/fn [a] a)
+           (c/fn [a] a)
 
-  ((c/fn f [] (c/fn g [a] f)))
+           ((c/fn f [] (c/fn g [a] f)))
 
-  (((eval `(c/fn ~'f [] (c/fn ~'g [~'a] ~'f)))
-     )
-    1)
+           (((eval `(c/fn ~'f [] (c/fn ~'g [~'a] ~'f)))
+             )
+            1)
 
-  ((c/fn [a] a)))
+           ((c/fn [a] a)))
+         )

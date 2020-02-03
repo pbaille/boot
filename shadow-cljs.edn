@@ -7,4 +7,4 @@
  {:app {:target :browser
         :output-dir "resources/public/js"
         :asset-path "/js"
-        :modules {:main {:entries [boot.generics]}}}}}
+        :modules {:main {:entries [boot.lenses]}}}}}
