@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [parents >= <=])
   (:require [boot.prelude :as p
              :refer [cs $ $vals *cljs*]]
-            [boot.state :refer [state]]
+            #?(:clj [boot.state :refer [state]])
             [clojure.core :as c]
             [clojure.set :as set]
             [clojure.string :as str])
@@ -89,7 +89,7 @@
        ;:seq `seq?
        :lst `seq?
        :set `set?
-       :map `p/holymap?
+       :map `map? #_`p/holymap?
        :num `number?
        :key `keyword?
        :sym `symbol?
@@ -286,7 +286,7 @@
       (let [gsym (gensym)]
         `(fn [~gsym] (when ~(symbolic-pred-body reg k gsym) ~gsym))))
 
-    #_(symbolic-pred (get-reg) :atom)
+    (symbolic-pred (get-reg) :map)
     #_(symbolic-pred (assoc (get-reg) :iop #{:hash 'clojure.lang.AMapEntry})
                      :iop)
 
@@ -312,7 +312,7 @@
     (sync-guards!)
     (macroexpand '(sync-guards!))
 
-    ((get-in @state [:guards :line]) ())
+    ((get-in @state [:guards :map]) ())
 
     (defn isa
 
@@ -362,7 +362,14 @@
                (let [exists? ((get-reg) tag)
                      generic-updates
                      (if exists? (cons tag parents) parents)]
-                 `(do (swap! state
+
+                 (swap! state
+                        update-in [:types (if *cljs* :cljs :clj)]
+                        conj-type
+                        {:tag tag #_(symbol (str *ns*) (name tag))
+                         :childs childs
+                         :parents parents})
+                 `(do #_(swap! state
                              update-in [:types (if *cljs* :cljs :clj)]
                              conj-type
                              {:tag ~tag
@@ -402,7 +409,7 @@
       (get-reg)
       (tag+ :iop.fop [:vec :set] [:hash])
 
-      (classes :num)
+      (classes :map)
 
       (macroexpand '(tag+ :iop.fop [:vec :set] [:hash]))
 
@@ -432,6 +439,7 @@
   ;; lets first inpect the registry, which old the state of the system
 
   (clojure.pprint/pprint (get-reg))
+  (classes :path)
 
   ;; looks like:
   '{:num #{java.lang.Number},
@@ -482,6 +490,7 @@
          [:hash] ;; belongs to the hash type 
          (g1 [x] "g1foo")) ;; implement some generic function (see asparagus.boot.generics)
 
+  #_(map type ((get-reg) :pouet))
   ;; inspection utilities
 
   (childs :hash) ;;=> (:set :map)

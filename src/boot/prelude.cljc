@@ -12,8 +12,6 @@
   #?(:cljs (:require-macros
              [boot.prelude :refer [#_error or and cp cs assert is _ defmac]])))
 
-(def iop "iop")
-
 #?(:cljs (enable-console-print!))
 
 (def debug (atom nil))
@@ -131,7 +129,11 @@
                    (instance? clojure.lang.Var x) (var-symbol x)
                    :else nil))
                (catch ClassNotFoundException _
-                 sym))))))
+                 sym))))
+
+       :cljs
+       (defn ns-resolve-sym [sym]
+         (println "does not exist in cljs"))))
 
 (defn parse-fn [[fst & nxt :as all]]
 
@@ -177,7 +179,8 @@
           define a regular macro
           but also a function that do the same thing as the macro
           (when receiving quoted args)
-          here I hope that it could ease macro composition and later ckish embeddings"
+          here I hope that it could ease macro composition and later ckish embeddings
+          note that if used from clojurescript, body have to contain only functions that are defined both in clojure and clojurescript"
          [& body]
          (let [;; this will remove special bindings &env and &form for function definitions
                rem-compile-time-bindings
@@ -398,6 +401,7 @@
 
                ))
 
+       ;; TODO this overides previously defined is macro (that uses clojure.test for better error message)
        (defmac is [x & xs]
                (let [xval (gensym)]
                  `(let [~xval ~x]
@@ -422,7 +426,7 @@
                     instead of consider it for a truthy value
                     (which doesn't make much sense, why would you hardcode a truthy value? for the last argument maybe...
                     we always can wrap it in a 'do :) or an 'id call :p
-                    if all cases fails returns nil (not 'false)"
+                    if all cases fails, it returns nil (not 'false)"
                    [& xs]
                    `(c/or
                       ~@(map #(cp % seq? %
@@ -461,6 +465,7 @@
        (do :and
 
            (defmac and
+                   "like 'or this definition of 'and handle collection literals"
                    ([x]
                     (list* `c/and (flat-collection-literal x)))
                    ([x & xs]
@@ -974,26 +979,26 @@
        (defmacro mx1' [x] `(mx1 '~x))
        (defmacro mx*' [x] `(mx* '~x))))
 
-#?(:clj
-   (do :shadowing
+(do :shadowing
 
-       (let [h (fn me [x]
-                 (cp x
-                     sym? [x]
-                     coll? (mapcat me x)
-                     []))]
+    (let [h (fn me [x]
+              (cp x
+                  sym? [x]
+                  coll? (mapcat me x)
+                  []))]
 
-         (def all-syms (comp set h)))
+      (def all-syms (comp set h)))
 
-       (defn shadows
-         "given a binding form as the one that fn use for its args
+    (defn shadows
+      "given a binding form as the one that fn use for its args
           it return a set of shadowed syms"
-         [binding-form]
+      [binding-form]
+      #?(:clj 
          (->> (destructure [binding-form '_])
               (take-nth 2) set
-              (clojure.set/intersection (all-syms binding-form))))
+              (clojure.set/intersection (all-syms binding-form)))))
 
-       ))
+    )
 
 (do :print
 
@@ -1428,5 +1433,5 @@
    #_(mx*' (cs [[x & xs] (range 1)] [x xs] :nop))
    )
 
-(defn main [& _]
+#_(defn main [& _]
   (println "hello"))

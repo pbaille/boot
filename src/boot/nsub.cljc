@@ -4,7 +4,9 @@
     [clojure.string :as str]
     [boot.prelude :as p :refer [use!]]
     [boot.named :as n]
-    [boot.state :as st])
+    [boot.fn :as fn]
+    [boot.state :as st]
+    [boot.prelude :as u])
   #?(:cljs (:require-macros [boot.prelude :refer [use!]]
                             [boot.nsub :refer [nsub]])))
 
@@ -14,7 +16,131 @@
 ;; In clojure, the common practice is to define one namespace per file, along with an isomorphic (I use fancy words) folder structure.
 ;; It's annoying me sometimes so I've done this
 
-#?(:clj (do :nsub
+(defn find-defs
+  "simplistic way to find nsub first level inner defs"
+  [forms]
+  #_(println 'find-defs forms)
+  (vec (flatten
+         (keep
+           (fn [x]
+             (or (and (seq? x)
+                      (or (and
+                            (re-matches #"^def.*" (name (first x)))
+                            (second x))
+                          (and (= 'do (first x))
+                               (find-defs (next x)))))
+                 nil))
+           forms))))
+
+(find-defs '(do (fn/defn add [x y] (+ x y))
+                (defn self [& _] "i'm the aze sub module")
+                (do (def pouet 1) (do (defn opo [x] x) (def ert 6)))
+                (nsub bop
+                      (defn self [& _] "i'm the bop sub module")
+                      (def loula 33))
+                (nsub lou
+                      (def self "value module"))))
+
+(def NSUB_POSTFIX "_NS")
+
+(defn parent-seq
+  ([nsym] (parent-seq (:namespaces @st/state) nsym))
+  ([nss nsym] (parent-seq nss nsym ()))
+  ([nss nsym ret]
+   (when-let [p (get-in nss [nsym :parent])]
+     (concat (parent-seq nss p)
+             (cons p ret)))))
+
+(:namespaces @st/state)
+(swap! st/state update :namespaces (constantly nil))
+
+(parent-seq 'boot.nsub.aze_NS.lou_NS)
+
+#?(:clj
+   (defmac+ nsub
+
+            ;; expander
+            [name body ctx ns]
+            (let [fullname (n/dotsym ns ctx (sym name NSUB_POSTFIX))
+                  ns-sym (n/dotsym ns ctx)
+                  [ns-body decls] (split-with (comp keyword? first) body)
+                  ;required (vec (remove '#{self} (get-in @st/state [:namespaces :locals ns-sym] [])))
+                  ]
+
+              (swap! st/state
+                     #(-> %
+                          (assoc-in [:namespaces fullname :locals] (find-defs decls))
+                          (assoc-in [:namespaces fullname :childs] #{})
+                          (assoc-in [:namespaces fullname :parent] ns-sym)
+                          (update-in [:namespaces ns-sym :childs] (fnil conj #{}) (sym name NSUB_POSTFIX))))
+
+              (u/pprob `(do (~'ns ~fullname ~@ns-body)
+                            #_(~'require '[~ns-sym :refer :all #_~required])
+                            ~@(mapv (fn [n] `(~'require '[~n :refer :all #_~required])) (parent-seq fullname))
+                            (~'ns-unmap '~fullname '~'self)
+                            (~'declare ~'self)
+                            ~@(mapv (fn [e]
+                                      (if (nsub-form? e)
+                                        (nsub-fn (update (nsub-parse (next e))
+                                                         :ctx conj (sym name NSUB_POSTFIX)))
+                                        e))
+                                    decls)
+                            (~'ns ~ns-sym)
+                            (~'require '[~fullname :as ~name])
+                            ~@(for [n (range (count ctx))]
+                                (let [ns-sym (n/dotsym ns (take n ctx))
+                                      alias-sym (n/dotsym (map #(str/replace % NSUB_POSTFIX "") (drop n ctx)) name)]
+                                  `(do
+                                     (~'ns ~ns-sym)
+                                     (~'require '[~fullname :as ~alias-sym]))))
+                            (~'ns ~ns-sym)
+                            (def ~name ~(sym name "/self"))
+                            )))
+
+            ;; parser
+            [name & body]
+            {:name name
+             :body body
+             :ns (ns-sym)
+             :ctx []}))
+
+(do
+  (macroexpand '(nsub aze
+                      (:require [boot.fn :as fn])
+                      (fn/defn add [x y] (+ x y))
+                      (defn self [& _] "i'm the aze sub module")
+                      (nsub bop
+                            (defn self [& _] "i'm the bop sub module")
+                            (def loula 33))
+                      (nsub lou
+                            (def self "value module"))))
+
+  (def pouetpouet 1)
+  (nsub aze ;; creates a subnamespace aze
+        (:require [boot.fn :as fn])
+        (fn/defn add [x y] (+ pouetpouet x y))
+        (defn self [& _] "i'm the aze sub module")
+        ;; creates a sub sub ns bop that have access to all the content of its parent
+        (nsub bop
+              (defn self [& _] "i'm the bop sub module")
+              (def loula 33))
+        (nsub lou
+              (def self "value module")
+              (defn louadd [x y] (add x y))))
+
+  (p/assert
+    (= 35 (aze/add 1 aze.bop/loula) (aze.lou/louadd 1 aze.bop/loula))
+    (= "i'm the bop sub module" (aze/bop))
+    (= "value module" aze/lou)))
+
+#_(do (ns my.ns
+      (:require [clojure.string :as s]))
+    (s/split "a.b.c" "."))
+
+
+
+
+#_(:clj (do :nsub
 
             (defmac+ nsub
 
@@ -242,9 +368,9 @@
                        ;;#?(:clj (println (the-ns ns-sym)))
                        (p/pprob 'nsub-expand
                                 `(do (~'ns ~fullname ~@ns-body)
-                                     #_(~'require '[~ns-sym :refer ~(vec (remove #{'self} (keys (ns-publics ns-sym))))])
+                                     (~'require '[~ns-sym :refer ~(find-defs ns-body)])
                                      #_(~'use '~ns-sym)
-                                     (~'use '[~ns-sym :exclude [~'self]])
+                                     #_(~'use '[~ns-sym :exclude [~'self]])
                                      #_(~'use ['~ns-sym :exclude ['~'self]])
                                      (~'ns-unmap '~fullname '~'self)
                                      (declare ~'self)

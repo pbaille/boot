@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+clojure -A:pack mach.pack.alpha.skinny --no-libs --project-path boot.jar

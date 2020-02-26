@@ -1,7 +1,7 @@
 (ns boot.generics
   (:require [boot.prelude :as p :refer [$ $vals sym pp]]
             [boot.types :as t]
-            [boot.state :refer [state]]
+            #?(:clj [boot.state :refer [state]])
             #?(:clj [clojure.core :as c] :cljs [cljs.core :as c]))
   #?(:cljs (:require-macros [boot.generics :refer [generic generic+ type+ fork compile-all!]])))
 
@@ -181,13 +181,18 @@
       #_(pp "extspec" [(:arities spec) (:arities extension-spec)])
       (p/assert (every? (:arities spec (constantly true)) (:arities extension-spec))
                 "unknown arity")
+
+      #_(merge-with
+          concat spec
+          (select-keys extension-spec
+                       [:cases :compiled-cases]))
+
       (merge-with
-        concat spec
+        (fn [s1 s2]
+          (concat (remove (set s2) s1) s2))
+        spec
         (select-keys extension-spec
-                     [:cases :compiled-cases]))
-      #_(-> spec
-            (update :cases concat (:cases extension-spec))
-            (update :compiled-cases concat (:compiled-cases extension-spec))))
+                     [:cases :compiled-cases])))
 
 
     (defn protocol-declaration-form
@@ -279,6 +284,19 @@
           #_(pp 'generics/sync-types name)
           (when (sync? ts) (sync-spec! name)))))
 
+    (defn sync-types-form
+      "when type registry has been updated,
+       we sometimes need to sync some generics declaration
+       xs: the types that have changed
+       only the generics impacted by this change will be synced"
+      [xs]
+      (let [sync? #(seq (clojure.set/intersection (set xs) (set %)))]
+        (cons 'do
+              (keep (fn [[name ts]]
+                      (when (sync? ts)
+                        (extension-form (get-spec! name))))
+                    (implementers-map)))))
+
     #_(sync-types! [:num :str])
 
     )
@@ -347,196 +365,197 @@
                  [tag & impls]
                  `(do ~@(mapv #(implement tag %) impls)))
 
-
        ))
 
-(generic g1 [x]
-         ;; prim type impl
-         :vec :g1vec
-         ;; this type is a group
-         ;; under the hood it implements for all collections
-         :coll [:g1coll x]
-         ;; group litteral can be handy
-         #{:key :sym} :key-or-sym)
+(comment
+  (extension-form (get-spec! 'ENV_joining_+__generic))
+  (generic g1 [x]
+           ;; prim type impl
+           :vec :g1vec
+           ;; this type is a group
+           ;; under the hood it implements for all collections
+           :coll [:g1coll x]
+           ;; group litteral can be handy
+           #{:key :sym} :key-or-sym)
 
 
 
-(meta g1)
+  (meta g1)
 
-(p/assert
-  (g1 [])
-  (g1 #{})
-  (g1 '())
-  (g1 'a)
-  (g1 :a))
+  (p/assert
+    (g1 [])
+    (g1 #{})
+    (g1 '())
+    (g1 'a)
+    (g1 :a))
 
-;; extension
-(generic+ g1 [x]
-          ;; str impl
-          :str [:str x]
-          ;; if a last expresion is given it extends Object
-          [:unknown x])
+  ;; extension
+  (generic+ g1 [x]
+            ;; str impl
+            :str [:str x]
+            ;; if a last expresion is given it extends Object
+            [:unknown x])
 
-#?(:clj (do (get-spec! 'g1)
-            (implementers (get-spec! 'g1))
-            (get-reg)))
+  #?(:clj (do (get-spec! 'g1)
+              (implementers (get-spec! 'g1))
+              (get-reg)))
 
-(p/assert
-  (g1 "a")
-  (g1 (atom {})))
+  (p/assert
+    (g1 "a")
+    (g1 (atom {})))
 
-;; poly arity exemple
-(generic g2
-         ([x y]
-          :vec [:g2vec x y]
-          :coll [:g2coll x y]
-          :num [:g2num x y]
-          :any [:g2any x y])
-         ([x y z]
-          :coll [:coll x y z])
-         ;; variadic arity
-         ([x y z & more]
-          :any
-          [:variadic x y z more]))
+  ;; poly arity exemple
+  (generic g2
+           ([x y]
+            :vec [:g2vec x y]
+            :coll [:g2coll x y]
+            :num [:g2num x y]
+            :any [:g2any x y])
+           ([x y z]
+            :coll [:coll x y z])
+           ;; variadic arity
+           ([x y z & more]
+            :any
+            [:variadic x y z more]))
 
-(p/assert
-  (= (g2 [] 1)
-     [:g2vec [] 1])
-  (= (g2 #{} 1)
-     [:g2coll #{} 1])
-  (= (g2 #{} 1 2)
-     [:coll #{} 1 2])
-  (= (g2 "me" 1 2 3 4)
-     [:variadic "me" 1 2 '(3 4)])
-  (= (g2 :iop 1 2 3 4)
-     [:variadic :iop 1 2 '(3 4)]))
+  (p/assert
+    (= (g2 [] 1)
+       [:g2vec [] 1])
+    (= (g2 #{} 1)
+       [:g2coll #{} 1])
+    (= (g2 #{} 1 2)
+       [:coll #{} 1 2])
+    (= (g2 "me" 1 2 3 4)
+       [:variadic "me" 1 2 '(3 4)])
+    (= (g2 :iop 1 2 3 4)
+       [:variadic :iop 1 2 '(3 4)]))
 
-(generic+ g2
-          ([a b] :vec [:g2vec2 a b])
-          ([a b c & ds] :str [:variadstr a b c ds]))
+  (generic+ g2
+            ([a b] :vec [:g2vec2 a b])
+            ([a b c & ds] :str [:variadstr a b c ds]))
 
-;; extension of an existing generic
+  ;; extension of an existing generic
 
-(p/assert
-  (= (g2 [] 1)
-     [:g2vec2 [] 1])
-  (= (g2 "me" 1 2 3 4)
-     [:variadstr "me" 1 2 '(3 4)]))
+  (p/assert
+    (= (g2 [] 1)
+       [:g2vec2 [] 1])
+    (= (g2 "me" 1 2 3 4)
+       [:variadstr "me" 1 2 '(3 4)]))
 
-;; fork is creating a new generic from an existing one
-;; it inherit all impls and extend/overide it with given implementations
-(fork g2 g2+
-      ([a b] :lst [:g2+seq2 a b])
-      ([a b c & ds] :str [:g2+variadstr a b c ds]))
+  ;; fork is creating a new generic from an existing one
+  ;; it inherit all impls and extend/overide it with given implementations
+  (fork g2 g2+
+        ([a b] :lst [:g2+seq2 a b])
+        ([a b c & ds] :str [:g2+variadstr a b c ds]))
 
-(p/assert
+  (p/assert
 
-  (= (g2 () 2) [:g2coll () 2])
-  (= (g2+ () 2) [:g2+seq2 () 2])
+    (= (g2 () 2) [:g2coll () 2])
+    (= (g2+ () 2) [:g2+seq2 () 2])
 
-  ;; original untouched
-  (= (g2+ "me" 1 2 3 4)
-     [:g2+variadstr "me" 1 2 '(3 4)])
+    ;; original untouched
+    (= (g2+ "me" 1 2 3 4)
+       [:g2+variadstr "me" 1 2 '(3 4)])
 
-  ;; original untouched
-  (= (g2 "me" 1 2 3 4)
-     [:variadstr "me" 1 2 '(3 4)])
+    ;; original untouched
+    (= (g2 "me" 1 2 3 4)
+       [:variadstr "me" 1 2 '(3 4)])
+    )
+
+  #?(:clj (get-spec! 'g2+))
+
+  (p/assert
+
+    (= (g2 () 2) [:g2coll () 2])
+    (= (g2+ () 2) [:g2+seq2 () 2])
+
+    ;; original untouched
+    (= (g2+ "me" 1 2 3 4)
+       [:g2+variadstr "me" 1 2 '(3 4)])
+
+    ;; original untouched
+    (= (g2 "me" 1 2 3 4)
+       [:variadstr "me" 1 2 '(3 4)])
+    )
+
+  (fork g2+ g2+clone)
+
+  ;; type+ is like extendtype
+  ;; implement several generics at a time for a given type
+
+  (type+ :fun
+         (g1 [x] :g1fun)
+         (g2 [x y] [:g2fun2 x y]))
+
+  (p/assert
+    (= [:g2fun2 inc 1] (g2 inc 1))
+    (= :g1fun (g1 (fn [a]))))
+
+  ;; the implementations given to type+ does not have to be asparagus generics,
+  ;; it can be regular clojure protocols functions
+  ;; CAUTION: it will not reflect type hierarchy further changes as with generics
+
+  (defprotocol Prot1 (prot1-f [x] [x y]))
+
+  (meta (resolve 'prot1-f))
+
+  (type+ :fun
+         (g1 [x] :g1fun)
+         (g2 [x y] [:g2fun2 x y])
+         ;; a raw protocol function
+         (prot1-f ([x] "prot1-f fun")
+                  ([x y] "prot1-f fun arity 2"))) ;; <- here;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
+
+  (p/assert
+    (= "prot1-f fun" (prot1-f inc))
+    (= "prot1-f fun arity 2" (prot1-f inc 42)))
+
+
+  #_(p/error "stop")
+
+  (generic sip'
+           ([a b]
+            :vec (conj a b)
+            :map (apply assoc a b)
+            :set (conj a b)
+            :lst (concat a [b])
+            :str (str a (.toString b))
+            :sym (symbol (sip' (name a) (.toString b)))
+            :key (keyword (sip' (name a) (.toString b))))
+           ([a b & xs]
+            (apply sip' (sip' a b) xs)))
+
+  (p/assert
+    (= (sip' [] 1 2 3)
+       [1 2 3])
+    (= (sip' #{} 1 2 3)
+       #{1 2 3}))
+
+  (generic valid'
+           [x]
+           :nil nil
+           :map (when (every? valid' (vals x)) x)
+           :coll (when (every? valid' x) x)
+           :word :validword
+           :any x)
+
+  (p/assert
+    (not (valid' [nil 1 nil]))
+    (valid' [1 2 3])
+    (valid' #{1 2 3})
+    (valid' {:a 1 :b 2})
+    (not (valid' {:a 1 :b 2 :c nil})))
+
+  #_(clojure.walk/macroexpand-all '(generic+ valid'
+                                             [x] :key :validkey))
+
+  (generic+ valid'
+            [x] :key :validkey)
+
+  #?(:clj (get-spec! 'valid'))
+
+  (p/assert
+    (= :validkey (valid' :a))
+    (= :validword (valid' 'a)))
   )
-
-#?(:clj (get-spec! 'g2+))
-
-(p/assert
-
-  (= (g2 () 2) [:g2coll () 2])
-  (= (g2+ () 2) [:g2+seq2 () 2])
-
-  ;; original untouched
-  (= (g2+ "me" 1 2 3 4)
-     [:g2+variadstr "me" 1 2 '(3 4)])
-
-  ;; original untouched
-  (= (g2 "me" 1 2 3 4)
-     [:variadstr "me" 1 2 '(3 4)])
-  )
-
-(fork g2+ g2+clone)
-
-;; type+ is like extendtype
-;; implement several generics at a time for a given type
-
-(type+ :fun
-       (g1 [x] :g1fun)
-       (g2 [x y] [:g2fun2 x y]))
-
-(p/assert
-  (= [:g2fun2 inc 1] (g2 inc 1))
-  (= :g1fun (g1 (fn [a]))))
-
-;; the implementations given to type+ does not have to be asparagus generics,
-;; it can be regular clojure protocols functions
-;; CAUTION: it will not reflect type hierarchy further changes as with generics
-
-(defprotocol Prot1 (prot1-f [x] [x y]))
-
-(meta (resolve 'prot1-f))
-
-(type+ :fun
-       (g1 [x] :g1fun)
-       (g2 [x y] [:g2fun2 x y])
-       ;; a raw protocol function
-       (prot1-f ([x] "prot1-f fun")
-                ([x y] "prot1-f fun arity 2"))) ;; <- here;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
-
-(p/assert
-  (= "prot1-f fun" (prot1-f inc))
-  (= "prot1-f fun arity 2" (prot1-f inc 42)))
-
-
-#_(p/error "stop")
-
-(generic sip'
-         ([a b]
-          :vec (conj a b)
-          :map (apply assoc a b)
-          :set (conj a b)
-          :lst (concat a [b])
-          :str (str a (.toString b))
-          :sym (symbol (sip' (name a) (.toString b)))
-          :key (keyword (sip' (name a) (.toString b))))
-         ([a b & xs]
-          (apply sip' (sip' a b) xs)))
-
-(p/assert
-  (= (sip' [] 1 2 3)
-     [1 2 3])
-  (= (sip' #{} 1 2 3)
-     #{1 2 3}))
-
-(generic valid'
-         [x]
-         :nil nil
-         :map (when (every? valid' (vals x)) x)
-         :coll (when (every? valid' x) x)
-         :word :validword
-         :any x)
-
-(p/assert
-  (not (valid' [nil 1 nil]))
-  (valid' [1 2 3])
-  (valid' #{1 2 3})
-  (valid' {:a 1 :b 2})
-  (not (valid' {:a 1 :b 2 :c nil})))
-
-#_(clojure.walk/macroexpand-all '(generic+ valid'
-                                           [x] :key :validkey))
-
-(generic+ valid'
-          [x] :key :validkey)
-
-#?(:clj (get-spec! 'valid'))
-
-(p/assert
-  (= :validkey (valid' :a))
-  (= :validword (valid' 'a)))
-
 
