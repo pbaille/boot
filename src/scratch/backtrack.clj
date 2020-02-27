@@ -1,4 +1,4 @@
-(ns boot.backtrack
+(ns scratch.backtrack
   (:require [boot.prelude]
             [clojure.core :as c]))
 
@@ -35,7 +35,7 @@
 
 (def end (fn [] nil))
 
-(require '[boot.nsub :refer [defmac+]])
+(require '[scratch.nsub :refer [defmac+]])
 
 (c/defn parse-fn' [[fst & nxt :as all]]
 
