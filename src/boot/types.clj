@@ -1,12 +1,10 @@
 (ns boot.types
   (:refer-clojure :exclude [parents >= <=])
-  (:require [boot.prelude :as p
-             :refer [cs $ $vals *cljs*]]
-            #?(:clj [boot.state :refer [state]])
+  (:require [boot.prelude :as p :refer [cs $ $vals]]
+            [boot.state :as state]
             [clojure.core :as c]
             [clojure.set :as set]
-            [clojure.string :as str])
-  #?(:cljs (:require-macros [boot.types :refer [regfn predmap sync-guards!]])))
+            [clojure.string :as str]))
 
 ;; this is a thin layer over clojure class hierarchy
 ;; the need for this comes from asparagus.boot.generics
@@ -102,24 +100,24 @@
     ;; prims key holds a map from type-keyword -> class
     ;; groups key hold a map from type-keyword -> #{type-keyword}
 
-    (swap! state
+    (swap! state/state
            #(-> %
-                (assoc-in [:types :clj] (merge prims groups))
-                (assoc-in [:types :cljs] (merge cljs-prims cljs-groups))))
+                (assoc-in [:clj :types] (merge prims groups))
+                (assoc-in [:cljs :types] (merge cljs-prims cljs-groups))))
 
     (defn get-reg []
-      (get-in @state [:types (if *cljs* :cljs :clj)]))
+      (state/get :types))
 
     (defn get-type [t]
       (get (get-reg) t))
 
     (defn get-guards []
-      (:guards @state))
+      (state/get :guards))
 
     (defn get-guard [t]
       (get (get-guards) t))
 
-    #_(p/pp @reg)
+    #_(p/pp @state/state)
 
     (defn all-paths
       ([]
@@ -142,18 +140,18 @@
 
     (defn cyclic? [x]
       (try (not (all-paths x))
-           (catch #?(:clj Exception :cljs js/Error) e true)))
+           (catch Exception e true)))
 
     #_(cyclic? @reg)
 
-    #?(:clj (p/defmac regfn
-                      [name doc & cases]
-                      (assert (string? doc) "doc please")
-                      (if (vector? (first cases))
-                        `(regfn ~name ~doc (~@cases))
-                        `(defn ~name ~doc
-                           ([x#] (~name (get-reg) x#))
-                           ~@cases)))))
+    (p/defmac regfn
+              [name doc & cases]
+              (assert (string? doc) "doc please")
+              (if (vector? (first cases))
+                `(regfn ~name ~doc (~@cases))
+                `(defn ~name ~doc
+                   ([x#] (~name (get-reg) x#))
+                   ~@cases))))
 
 (do :basics
 
@@ -206,7 +204,7 @@
              (symbol? t)
              #_(if *cljs* (symbol? t) (class? t)) [t]
 
-             (= :any t) (list (if *cljs* 'default 'Object))
+             (= :any t) (list (if (state/cljs?) 'default 'Object))
 
              (set? t)
              (mapcat #(classes reg %) t)
@@ -282,11 +280,26 @@
 
     #_(symbolic-pred-body @reg :hash 'x)
 
-    (defn symbolic-pred [reg k]
-      (let [gsym (gensym)]
-        `(fn [~gsym] (when ~(symbolic-pred-body reg k gsym) ~gsym))))
+    (defn symbolic-pred
+      ([k] (symbolic-pred (get-reg) k))
+      ([reg k]
+       (if-not (map? reg)
+         (symbolic-pred (get-reg) reg k)
+         (do
+           (p/assert {:unknown-type {k (reg k)}})
+           (let [gsym (gensym)]
+             `(fn [~gsym] (when ~(symbolic-pred-body reg k gsym) ~gsym))))))
+      ([reg k seed]
+       (p/assert {:unknown-type {k (reg k)}})
+       (let [gsym (gensym)]
+         `(let [~gsym ~seed]
+            (when ~(symbolic-pred-body reg k gsym) ~gsym)))))
 
-    (symbolic-pred (get-reg) :map)
+    (comment
+      (symbolic-pred (get-reg) :map)
+      (symbolic-pred :map)
+      (symbolic-pred :uk)
+      (symbolic-pred (get-reg) :hash '(heavy-computation)))
     #_(symbolic-pred (assoc (get-reg) :iop #{:hash 'clojure.lang.AMapEntry})
                      :iop)
 
@@ -298,37 +311,27 @@
             (into {}))))
 
     (defn predmap
-            ([] (compile-pred-map (get-reg)))
-       ([reg] (compile-pred-map reg)))
+      ([] (compile-pred-map (get-reg)))
+      ([reg] (compile-pred-map reg)))
 
     (def builtin-preds (predmap))
 
-    #?(:clj (p/defmac sync-guards!
-                      "recompile the guards map, used by group+ and prim+
-                       not intended to be used directly"
-                      [] `(swap! state assoc :guards ~(predmap))))
+    #_(p/defmac sync-guards!
+                "recompile the guards map, used by group+ and prim+
+                 not intended to be used directly"
+                [] `(state/swap! assoc :guards ~(predmap)))
 
     ;; initializing guards with builtin types
-    (sync-guards!)
-    (macroexpand '(sync-guards!))
+    #_(sync-guards!)
+    #_(macroexpand '(sync-guards!))
 
-    ((get-in @state [:guards :map]) ())
+    #_((get-in @state [:guards :map]) ())
 
-    (defn isa
-
-      "check if 'x is of type 'tag
-       a state can be explicitly passed as first argument,
-       else the global state is used"
-
-      ([tag] (partial isa tag))
-      ([tag x] (isa @state tag x))
-      ([state tag x]
-       (cs [guard (get-in state [:guards tag])]
-           (guard x)
-           (set? tag)
-           (loop [[t1 & ts] tag]
-             (or (isa state t1 x)
-                 (when ts (recur ts)))))))
+    (p/defmac isa
+              ([t] `(fn [x#] (isa ~t x#)))
+              ([t x]
+               (cs [? (get-type t)] `(~(symbolic-pred t) ~x)
+                   (set? t) `(or ~@(map (fn [t] (isa-fn t x)) t)))))
 
     (p/assert
       (isa :any)
@@ -338,96 +341,6 @@
       (isa :word 'a)
       (isa #{:sym :key} 'a)
       ((isa :word) :pouet))
-
-    )
-
-(do :extension
-
-    (defn conj-type [reg {:keys [tag childs parents]}]
-      (reduce
-        (fn [reg p]
-          (update reg p (fnil conj #{}) tag))
-        (update reg tag (fnil into #{}) childs)
-        parents))
-
-    (p/defmac tag+
-
-              "add a type tag to the type registry (living in asparagus.boot.state/state)
-               tag: the typetag we are defining/extending (a keyword)
-               childs: a seq of other typetags or classes that belongs to the defined tag
-               parents: a seq of other typetags that the defined tag belongs to
-               & impls: optional generic implementations for the defined tag"
-
-              ([{:keys [tag childs parents impls]}]
-               (let [exists? ((get-reg) tag)
-                     generic-updates
-                     (if exists? (cons tag parents) parents)]
-
-                 (swap! state
-                        update-in [:types (if *cljs* :cljs :clj)]
-                        conj-type
-                        {:tag tag #_(symbol (str *ns*) (name tag))
-                         :childs childs
-                         :parents parents})
-                 `(do #_(swap! state
-                             update-in [:types (if *cljs* :cljs :clj)]
-                             conj-type
-                             {:tag ~tag
-                              :childs ~childs
-                              :parents ~parents})
-                      (boot.generics/sync-types! ~(vec generic-updates))
-                      ~(when impls `(boot.generics/type+ ~tag ~@impls))
-                      (sync-guards!))))
-
-              ([tag childs]
-               `(tag+ ~tag ~childs []))
-              ([tag childs parents & impls]
-               `(tag+ ~{:tag tag :childs childs :parents parents :impls (vec impls)})))
-
-    (p/defmac type+
-
-              "declare a new usertype (a clojure record)
-               tag: the typetag (keyword) corresponding to our freshly created record
-               fields: the fields of our record
-               parents: a seq of other typetags that our type belongs to
-               & impls: optional generic implementations for the defined type"
-
-              ([{:as spec
-                 :keys [tag parents impls fields childs class-sym]}]
-               (let [class-str (apply str (map str/capitalize (str/split (name tag) #"\.")))
-                     class-sym (or class-sym (symbol class-str))
-                     spec (update spec :childs (fnil conj []) class-sym)]
-                 `(do (defrecord ~class-sym ~fields)
-                      (tag+ ~spec))))
-              ([tag fields]
-               `(type+ ~tag ~fields []))
-              ([tag fields parents & impls]
-               `(type+ ~{:tag tag :parents parents :impls (vec impls) :fields fields})))
-
-    (comment
-
-      (get-reg)
-      (tag+ :iop.fop [:vec :set] [:hash])
-
-      (classes :map)
-
-      (macroexpand '(tag+ :iop.fop [:vec :set] [:hash]))
-
-      (type+ :pou.pouet [iop foo] nil
-             #_(g1 [x] "g1foo"))
-
-      (type+ {:tag :pouet
-              :fields [iop foo]
-              :class-sym POUUUUUET
-              #_(g1 [x] "g1foo")})
-
-      (map macroexpand (macroexpand '(type+ :pouet [iop foo] [:hash]
-                                            (g1 [x] "g1foo"))))
-
-      (clojure.walk/macroexpand-all '(type+ :pouet [iop foo] [:hash]
-                                            (g1 [x] "g1foo")))
-
-      (asparagus.boot.generics/g1 (Pouet. 1 2)))
 
     )
 
@@ -487,7 +400,7 @@
   ;; there is also a way to create clojure record along with declaring a new typetag
   (type+ :pouet ;; declare a new typetag :pouet for a the record Pouet (created)
          [iop foo] ;; with two fields
-         [:hash] ;; belongs to the hash type 
+         [:hash] ;; belongs to the hash type
          (g1 [x] "g1foo")) ;; implement some generic function (see asparagus.boot.generics)
 
   #_(map type ((get-reg) :pouet))

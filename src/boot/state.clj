@@ -1,35 +1,53 @@
 (ns boot.state
-  (:refer-clojure :exclude [reset!]))
+  (:refer-clojure :exclude [reset! swap! get get-in])
+  (:require [clojure.core :as c]))
 
 (def state0
-  {:fns {}
-   :types {}
-   :guards {}
-   :namespaces {}})
+  {:clj
+   {:fns {}
+    :types {}
+    :guards {}
+    :namespaces {}}
+   :cljs
+   {:fns {}
+    :types {}
+    :guards {}
+    :namespaces {}}})
 
 (def state (atom state0))
 
-(def ^:dynamic *cljs?* nil)
-(def ^:dynamic *expansion-env* nil)
+(def debug (atom nil))
 
-(defmacro binding-expansion-dynamic-vars [& body]
-  `(binding [*expansion-env* (or *expansion-env* ~'&env)
-             *cljs?* (or *cljs?* (boolean (:ns ~'&env)))]
+(def ^:dynamic *expansion-state*
+  {:env nil :form nil})
+
+(defn env [] (:env *expansion-state*))
+(defn form [] (:form *expansion-state*))
+(defn cljs? [] (boolean (:ns (env))))
+(defn clj-state [] (:clj @state))
+(defn cljs-state [] (:cljs @state))
+
+(defn current []
+  (if (cljs?) (cljs-state) (clj-state)))
+
+(defn get
+  ([] (current))
+  ([k] (c/get (current) k)))
+
+(defn get-in [p]
+  (c/get-in (current) p))
+
+(defn compilation-target []
+  (if (cljs?) :cljs :clj))
+
+(defmacro expanding [& body]
+  `(binding [*expansion-state*
+             {:env ~'&env :form ~'&form}]
      ~@body))
 
-(defmacro if-cljs [then else]
-  `(if *cljs?* ~then ~else))
+(defn swap! [f & args]
+  (c/swap! state update (compilation-target) #(apply f % args)))
 
-#_(defn qualify-symbol [x]
-  (when (symbol? x)
-    (if-cljs
-      (:name (cljs.analyzer/resolve-var *expansion-env* x))
-      (if-let [v (resolve *expansion-env* x)]
-        (let [{:keys [ns name]} (meta v)]
-          (symbol (str ns) (str name)))))))
-
-(defn target-kw []
-  (if-cljs :cljs :clj))
-
-(defn reset! []
-  (clojure.core/reset! state state0))
+(defn reset!
+  ([] (reset! state0))
+  ([x] (clojure.core/reset! state x)))

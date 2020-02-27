@@ -1,24 +1,23 @@
 (ns boot.prelude
+
   (:refer-clojure
     :exclude [assert not-empty empty or and cat])
+
   (:require
     [clojure.core :as c]
-    [clojure.string :as str]
     [clojure.set :as set]
-    [boot.named :as n]
-    [#?(:cljs cljs.pprint :clj clojure.pprint) :as pp]
     [clojure.walk :as walk]
-    [#?(:cljs cljs.test :clj clojure.test) :as test])
+    [clojure.string :as str]
+    [#?(:cljs cljs.pprint :clj clojure.pprint) :as pp]
+    [#?(:cljs cljs.test :clj clojure.test) :as test]
+
+    [boot.named :as n]
+    #?(:clj [boot.state :as state]))
+
   #?(:cljs (:require-macros
              [boot.prelude :refer [#_error or and cp cs assert is _ defmac]])))
 
 #?(:cljs (enable-console-print!))
-
-(def debug (atom nil))
-
-(def ^:dynamic *cljs* #?(:cljs true :clj false))
-
-#?(:clj (defmacro if-cljs [t e] (if *cljs* ~t ~e)))
 
 (do :aliases
 
@@ -168,6 +167,276 @@
      :impls impls
      :cases (mapv (p* list*) impls)}))
 
+(do :misc
+
+    (defn call* [xs]
+      #_(pp xs)
+      (apl (first xs) (rest xs)))
+
+    (defn flip [f] #(f %2 %1))
+
+    (defn word? [x]
+      (c/or (sym? x) (kw? x)))
+
+    (defn holymap? [x]
+      (c/and (not (record? x))
+             (map? x)))
+
+    (defn holycoll? [x]
+      (c/or (seq? x) (vec? x)
+            (set? x) (holymap? x)))
+
+    (defn error [& xs]
+      (throw (new #_js/Error
+               #?(:cljs js/Error
+                  :clj  Exception)
+               (str* xs))))
+
+    #?(:clj
+       (defmacro cp [x & xs]
+         `(condp #(%1 %2) ~x ~@xs)))
+
+    #_(defn guard [f]
+        (fn [x & xs]
+          (when (apply f x xs) x))))
+
+(do :template
+
+    (defn gensyms []
+      (repeatedly gensym))
+
+    (defn argv-litt [n & [prefix]]
+      (vec (repeatedly n #(gensym (c/or prefix "a_")))))
+
+    (defn quote? [x]
+      (c/and (seq? x) (= (first x) 'quote)))
+
+    (defn unquote? [form]
+      (c/and (seq? form)
+             (= (car form)
+                'clojure.core/unquote)))
+
+    (defn unquote-splicing? [form]
+      (c/and (seq? form)
+             (= (car form)
+                'clojure.core/unquote-splicing)))
+
+    (defn quotef
+      "@bbloom/backtic, simplified version"
+      [form]
+      (cp form
+          unquote? (second form)
+          unquote-splicing? (error "splice not in list")
+          holycoll?
+          (let [xs (if (map? form) (cat* form) form)
+                parts (for [x xs]
+                        (if (unquote-splicing? x)
+                          (second x)
+                          [(quotef x)]))
+                cat (doall `(concat ~@parts))]
+            (cp form
+                vec? `(vec ~cat)
+                map? `(apply hash-map ~cat)
+                set? `(set ~cat)
+                seq? `(apply list ~cat)
+                (error "Unknown collection type")))
+          `'~form))
+
+    (defmacro sq
+      ([x] (quotef x))
+      ([x & xs] (quotef (cons x xs))))
+
+    #_(_ :tries
+         (mx' (sq (a b ~(+ 1 2) (sq (c b ~'~(+ 1 2 3))))))
+
+         (let [name1 '(range 3)
+               name2 'y]
+           (quotef (list 'a (sq (b ~@~name1 ~'~name2 d)) 'e)))
+
+         (quotef '(+ a b c ~(+ 1 2) ~@(range 10)))))
+
+(do :$
+
+    (defn redh [f xs]
+      (reduce f {} xs))
+
+    (def remnil
+      (partial remove nil?))
+
+    (defn mentry? [x]
+      (instance? #?(:clj  clojure.lang.MapEntry
+                    :cljs cljs.core/MapEntry) x))
+
+    (defn empty [x]
+      (cp x
+          record? (apply dissoc x (keys x))
+          mentry? []
+          (c/empty x)))
+
+    (defn $fn [ffn]
+      (fn [x f]
+        (if (seq? x)
+          (ffn f x)
+          (into (empty x) (ffn f x)))))
+
+    (def shrink+ ($fn filter))
+    (def shrink- ($fn remove))
+    (def $! ($fn keep))
+    (def $ ($fn map))
+
+    (defn $vals [x f]
+      ($ x (fn [[k v]] [k (f v)])))
+
+    (defn $keys [x f]
+      ($ x (fn [[k v]] [(f k) v])))
+
+    (defn all? [x f]
+      (when (= (count x)
+               (count (filter f x)))
+        (c/or x true)))
+
+    (defn walk? [x node? f]
+      (if (node? x)
+        ($ x #(walk? % node? f))
+        (f x)))
+
+    (defn deep-truth [x]
+      (if (coll? x)
+        (all? x deep-truth)
+        x))
+
+    (defn doall-rec
+      "realize all nested potetially nested lazy sequences
+       usefull in macros, because when using dynamic vars based expansion state, we have to be sure that there is no lazyness in the expansion
+       otherwise dynamic vars will not be bounded as intended when expansion lazy parts are realized"
+      [x]
+      (cond (seq? x) (c/or (seq x) ())
+            (coll? x) ($ x doall-rec)
+            :else x))
+
+    #_(assert
+        (deep-truth [1 2 [3 5 {:a 1 :b 2}]])
+        (not (deep-truth [1 2 [3 5 {:a nil :b 2}]])))
+
+    )
+
+(do :colls
+
+    (def lst* list*)
+
+    (defn set* [& xs] (into (set (butlast xs)) (last xs)))
+    (defn set+ [& xs] (reduce into #{} xs))
+
+    (defn vec* [& xs] (catv (butlast xs) (last xs)))
+    (defn vec+ [& xs] (catv* xs))
+
+    (def set+* (p* set+))
+    (def vec+* (p* vec+))
+
+    #_(_ :tests
+         (set* 1 2 3 (range 34 36))
+         (set+ (range 12) [45 6])
+         (set+* [90 8] [(range 12) [45 6]]))
+
+    (defn set- [& xs]
+      (reduce set/difference ($ xs set)))
+
+    (def uncs (juxt first rest))
+    (def runcs (juxt butlast last))
+
+    (defn flagmap
+      ([] {})
+      ([x]
+       (cond
+         (c/or (seq? x) (vec? x) (set? x))
+         (zipmap x (repeat true))
+         (nil? x) {}
+         :else {x true}))
+      ([x & xs] (flagmap (cons x xs))))
+
+    #_(assert
+        (= (flagmap :a :b)
+           (flagmap (keys {:a 1 :b 2}))
+           (flagmap #{:a :b})
+           (flagmap (lst :a :b))
+           (flagmap [:a :b])))
+
+    (def kset
+      (comp set keys))
+
+    (defn member? [xs e]
+      (contains? (set xs) e))
+
+    (defn indexof [xs e]
+      (c/and (member? xs e)
+             (loop [i 0 [x & xs] xs]
+               (if (= x e)
+                 i (recur (inc i) xs)))))
+
+    (defn not-empty [x]
+      (when-not (empty? x) x))
+
+    (defn butlasts
+      [s]
+      (if (seq s)
+        (cons s (butlasts (butlast s)))
+        '(())))
+
+    (defn tails
+      [s]
+      (if (seq s)
+        (cons s (tails (cdr s)))
+        '(())))
+
+    (defn gat [xs i]
+      (if (>= i 0)
+        (cond
+          (vector? xs) (get xs i)
+          (seq? xs) (first (drop i xs)))
+        (gat (reverse xs) (- (inc i)))))
+
+    (defn deep-merge
+      ([x y]
+       (cond
+         (nil? x) y
+         (nil? y) x
+
+         (every? holymap? [x y])
+         (merge-with deep-merge x y)
+
+         (every? set? [x y])
+         (into x y)
+
+         :else y))
+      ([x y & ys]
+       (reduce deep-merge
+               x (cons y ys))))
+
+    (defn findeep [x p]
+      (cp x
+          p (list x)
+          coll? (mapcat #(findeep % p) x)
+          ()))
+
+    (comment :split-at-xp
+
+             (defn split-at
+               ([x idx] (split-at x idx []))
+               ([x idx acc]
+                (if (zero? idx) [acc x]
+                                (recur (rest x) (dec idx) (conj acc (first x))))))
+
+             (time (dotimes [_ 100000]
+                     (let [[pre post] (c/split-at 42 (range 100))]
+                       [(doall pre) (doall post)]))) ;; 602ms
+
+             ;; a little faster
+             (time (dotimes [_ 100000]
+                     (let [[pre post] (split-at (range 100) 42)]
+                       [(doall pre) (doall post)]))) ;; 502ms
+             ))
+
+
 #?(:clj
 
    (do :base-macros
@@ -182,21 +451,26 @@
           here I hope that it could ease macro composition and later ckish embeddings
           note that if used from clojurescript, body have to contain only functions that are defined both in clojure and clojurescript"
          [& body]
-         (let [;; this will remove special bindings &env and &form for function definitions
-               rem-compile-time-bindings
-               (partial walk/postwalk-replace '{&env nil form nil})
-               ;; this will bind the dynamic var *cljs* to true if the macro or the corresponding function is called from cljs
-               with-cljs-binding
-               (fn [[pat & bod]] `(~pat (binding [*cljs* (boolean (:ns ~'&env))] ~@bod)))
-               {:keys [name doc meta cases]} (parse-fn body)
-               ;;cases (map with-cljs-binding cases)
-               fname (sym name '-fn)
-               fname* (sym fname '*)]
-           `(do (defn ~fname ~@(rem-compile-time-bindings cases))
+         (when-not (:ns &env) ;; defmac emits nil in cljs
+           (let [body
+                 (walk/postwalk-replace '{&env (state/env) &form (state/form)} body)
+
+                 {:keys [name doc meta cases]} (parse-fn body)
+                 fname (sym name '-fn)
+                 fname* (sym fname '*)]
+             #_(clojure.pprint/pprint body)
+             `(do
+                (defn ~fname ~@cases)
                 (def ~fname* (p* ~fname))
                 (defmacro ~name ~doc
                   ~(assoc meta :fn fname)
-                  ~@(map with-cljs-binding cases)))))
+                  ~@(mapv (fn [[argv & body]]
+                            `(~argv (state/expanding
+                                      (doall-rec
+                                        (do ~@body)))))
+                          cases))))))
+
+       #_(macroexpand '(defmac pouet "ioio" [x] (println &env) x))
 
        #_(defmacro error
            "there is no reason for this being a macro"
@@ -209,27 +483,27 @@
 
        (defmac marked-fn
 
-         "marked function,
-          define an anonymous form (like fn)
-          a def form (like defn)
-          and a predicate function (like fn?)"
+               "marked function,
+                define an anonymous form (like fn)
+                a def form (like defn)
+                and a predicate function (like fn?)"
 
-         [name & [doc]]
+               [name & [doc]]
 
-         `(do
+               `(do
 
-            (defmac ~name
-                    [& body#]
-                    (let [parsed# (parse-fn body#)]
-                      `(with-meta
-                         (fn ~(c/or (:name parsed#) (gensym)) ~@(:cases parsed#))
-                         {~~(keyword name) true})))
+                  (defmac ~name
+                          [& body#]
+                          (let [parsed# (parse-fn body#)]
+                            `(with-meta
+                               (fn ~(c/or (:name parsed#) (gensym)) ~@(:cases parsed#))
+                               {~~(keyword name) true})))
 
-            (defn ~(sym name "?") [x#]
-              (when (-> x# meta ~(keyword name)) x#))
+                  (defn ~(sym name "?") [x#]
+                    (when (-> x# meta ~(keyword name)) x#))
 
-            (defmac ~(sym 'def name) [name'# & body#]
-                    `(def ~name'# (~'~name ~@body#)))))
+                  (defmac ~(sym 'def name) [name'# & body#]
+                          `(def ~name'# (~'~name ~@body#)))))
 
        (defmac import-macros [x y & nxt]
                `(do (def ~x (var ~y))
@@ -279,7 +553,7 @@
           )
 
        (defn error-form [& xs]
-         `(throw (new ~(if *cljs* 'js/Error 'Exception) (~'str ~@xs))))
+         `(throw (new ~(if (state/cljs?) 'js/Error 'Exception) (~'str ~@xs))))
 
        (defmacro is [x & xs]
          `(do (test/is ~x)
@@ -714,261 +988,6 @@
 
        ))
 
-(do :misc
-
-    (defn call* [xs]
-      #_(pp xs)
-      (apl (first xs) (rest xs)))
-
-    (defn flip [f] #(f %2 %1))
-
-    (defn word? [x]
-      (c/or (sym? x) (kw? x)))
-
-    (defn holymap? [x]
-      (and (not (record? x))
-           (map? x)))
-
-    (defn holycoll? [x]
-      (c/or (seq? x) (vec? x)
-            (set? x) (holymap? x)))
-
-    (defn error [& xs]
-      (throw (new #_js/Error
-               #?(:cljs js/Error
-                  :clj  Exception)
-               (str* xs))))
-
-    #_(defn guard [f]
-        (fn [x & xs]
-          (when (apply f x xs) x))))
-
-(do :template
-
-    (defn gensyms []
-      (repeatedly gensym))
-
-    (defn argv-litt [n & [prefix]]
-      (vec (repeatedly n #(gensym (c/or prefix "a_")))))
-
-    (defn quote? [x]
-      (and (seq? x) (= (first x) 'quote)))
-
-    (defn unquote? [form]
-      (and (seq? form)
-           (= (car form)
-              'clojure.core/unquote)))
-
-    (defn unquote-splicing? [form]
-      (and (seq? form)
-           (= (car form)
-              'clojure.core/unquote-splicing)))
-
-    (defn quotef
-      "@bbloom/backtic, simplified version"
-      [form]
-      (cp form
-          unquote? (second form)
-          unquote-splicing? (error "splice not in list")
-          holycoll?
-          (let [xs (if (map? form) (cat* form) form)
-                parts (for [x xs]
-                        (if (unquote-splicing? x)
-                          (second x)
-                          [(quotef x)]))
-                cat (doall `(concat ~@parts))]
-            (cp form
-                vec? `(vec ~cat)
-                map? `(apply hash-map ~cat)
-                set? `(set ~cat)
-                seq? `(apply list ~cat)
-                (error "Unknown collection type")))
-          `'~form))
-
-    (defmac sq
-            ([x] (quotef x))
-            ([x & xs] (quotef (cons x xs))))
-
-    (_ :tries
-       (mx' (sq (a b ~(+ 1 2) (sq (c b ~'~(+ 1 2 3))))))
-
-       (let [name1 '(range 3)
-             name2 'y]
-         (quotef (list 'a (sq (b ~@~name1 ~'~name2 d)) 'e)))
-
-       (quotef '(+ a b c ~(+ 1 2) ~@(range 10)))))
-
-(do :$
-
-    (defn redh [f xs]
-      (reduce f {} xs))
-
-    (def remnil
-      (partial remove nil?))
-
-    (defn mentry? [x]
-      (instance? #?(:clj  clojure.lang.MapEntry
-                    :cljs cljs.core/MapEntry) x))
-
-    (defn empty [x]
-      (cp x
-          record? (apply dissoc x (keys x))
-          mentry? []
-          (c/empty x)))
-
-    (defn $fn [ffn]
-      (fn [x f]
-        (if (seq? x)
-          (ffn f x)
-          (into (empty x) (ffn f x)))))
-
-    (def shrink+ ($fn filter))
-    (def shrink- ($fn remove))
-    (def $! ($fn keep))
-    (def $ ($fn map))
-
-    (defn $vals [x f]
-      ($ x (fn [[k v]] [k (f v)])))
-
-    (defn $keys [x f]
-      ($ x (fn [[k v]] [(f k) v])))
-
-    (defn all? [x f]
-      (when (= (count x)
-               (count (filter f x)))
-        (c/or x true)))
-
-    (defn walk? [x node? f]
-      (if (node? x)
-        ($ x #(walk? % node? f))
-        (f x)))
-
-    (defn deep-truth [x]
-      (if (coll? x)
-        (all? x deep-truth)
-        x))
-
-    #_(assert
-        (deep-truth [1 2 [3 5 {:a 1 :b 2}]])
-        (not (deep-truth [1 2 [3 5 {:a nil :b 2}]])))
-
-    )
-
-(do :colls
-
-    (def lst* list*)
-
-    (defn set* [& xs] (into (set (butlast xs)) (last xs)))
-    (defn set+ [& xs] (reduce into #{} xs))
-
-    (defn vec* [& xs] (catv (butlast xs) (last xs)))
-    (defn vec+ [& xs] (catv* xs))
-
-    (def set+* (p* set+))
-    (def vec+* (p* vec+))
-
-    (_ :tests
-       (set* 1 2 3 (range 34 36))
-       (set+ (range 12) [45 6])
-       (set+* [90 8] [(range 12) [45 6]]))
-
-    (defn set- [& xs]
-      (reduce set/difference ($ xs set)))
-
-    (def uncs (juxt first rest))
-    (def runcs (juxt butlast last))
-
-    (defn flagmap
-      ([] {})
-      ([x]
-       (cond
-         (c/or (seq? x) (vec? x) (set? x))
-         (zipmap x (repeat true))
-         (nil? x) {}
-         :else {x true}))
-      ([x & xs] (flagmap (cons x xs))))
-
-    (assert
-      (= (flagmap :a :b)
-         (flagmap (keys {:a 1 :b 2}))
-         (flagmap #{:a :b})
-         (flagmap (lst :a :b))
-         (flagmap [:a :b])))
-
-    (def kset
-      (comp set keys))
-
-    (defn member? [xs e]
-      (contains? (set xs) e))
-
-    (defn indexof [xs e]
-      (and (member? xs e)
-           (loop [i 0 [x & xs] xs]
-             (if (= x e)
-               i (recur (inc i) xs)))))
-
-    (defn not-empty [x]
-      (when-not (empty? x) x))
-
-    (defn butlasts
-      [s]
-      (if (seq s)
-        (cons s (butlasts (butlast s)))
-        '(())))
-
-    (defn tails
-      [s]
-      (if (seq s)
-        (cons s (tails (cdr s)))
-        '(())))
-
-    (defn gat [xs i]
-      (if (>= i 0)
-        (cond
-          (vector? xs) (get xs i)
-          (seq? xs) (first (drop i xs)))
-        (gat (reverse xs) (- (inc i)))))
-
-    (defn deep-merge
-      ([x y]
-       (cond
-         (nil? x) y
-         (nil? y) x
-
-         (every? holymap? [x y])
-         (merge-with deep-merge x y)
-
-         (every? set? [x y])
-         (into x y)
-
-         :else y))
-      ([x y & ys]
-       (reduce deep-merge
-               x (cons y ys))))
-
-    (defn findeep [x p]
-      (cp x
-          p (list x)
-          coll? (mapcat #(findeep % p) x)
-          ()))
-
-    (comment :split-at-xp
-
-             (defn split-at
-               ([x idx] (split-at x idx []))
-               ([x idx acc]
-                (if (zero? idx) [acc x]
-                                (recur (rest x) (dec idx) (conj acc (first x))))))
-
-             (time (dotimes [_ 100000]
-                     (let [[pre post] (c/split-at 42 (range 100))]
-                       [(doall pre) (doall post)]))) ;; 602ms
-
-             ;; a little faster
-             (time (dotimes [_ 100000]
-                     (let [[pre post] (split-at (range 100) 42)]
-                       [(doall pre) (doall post)]))) ;; 502ms
-             ))
 
 #?(:clj
    (do :expand
@@ -993,7 +1012,7 @@
       "given a binding form as the one that fn use for its args
           it return a set of shadowed syms"
       [binding-form]
-      #?(:clj 
+      #?(:clj
          (->> (destructure [binding-form '_])
               (take-nth 2) set
               (clojure.set/intersection (all-syms binding-form)))))
@@ -1006,7 +1025,7 @@
     (defn pretty-str [& xs] (with-out-str (apply pp xs)))
     (defn prob [& xs] (mapv println xs) (last xs))
     (defn pprob [& xs] (mapv pp xs) (last xs))
-    (defn dbg [& xs] (when @debug (apply println xs)))
+    (defmac dbg [& xs] (when @state/debug `(println ~@xs)))
 
     (defmethod pp/simple-dispatch #?(:clj clojure.lang.AFunction :cljs 'function) [x]
       (pp/simple-dispatch 'λ)))
@@ -1434,4 +1453,4 @@
    )
 
 #_(defn main [& _]
-  (println "hello"))
+    (println "hello"))

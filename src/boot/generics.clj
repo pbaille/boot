@@ -1,9 +1,9 @@
 (ns boot.generics
   (:require [boot.prelude :as p :refer [$ $vals sym pp]]
             [boot.types :as t]
-            #?(:clj [boot.state :refer [state]])
-            #?(:clj [clojure.core :as c] :cljs [cljs.core :as c]))
-  #?(:cljs (:require-macros [boot.generics :refer [generic generic+ type+ fork compile-all!]])))
+            [boot.state :as state]
+            [clojure.core :as c]
+            [clojure.string :as str]))
 
 ;; generic function
 ;; based on clojure protocols with some extra features
@@ -21,15 +21,16 @@
 (do :state
 
     (defn get-reg []
-      (get-in @state [:fns (if p/*cljs* :cljs :clj)]))
+      (state/get :fns))
 
     (defn get-spec! [name]
       #_(p/pprob @state)
-      (or (get-in @state [:fns (if p/*cljs* :cljs :clj) name])
+      (or (state/get-in [:fns name])
           (p/error "Cannot find spec " name)))
 
     (defn reset-registry! []
-      (swap! state assoc :fns {:cljs {} :clj {}}))
+      (swap! state/state assoc-in [:clj :fns] {})
+      (swap! state/state assoc-in [:cljs :fns] {}))
 
     (reset-registry!))
 
@@ -171,7 +172,7 @@
 
     (defn registering-form [spec]
       #_(println 'willswap [:fns (if p/*cljs* :cljs :clj) (:name spec)] #_spec)
-      (swap! state assoc-in [:fns (if p/*cljs* :cljs :clj) (:name spec)] spec)
+      (state/swap! assoc-in [:fns (:name spec)] spec)
       #_(println get-reg)
       #_(println `(swap! state assoc-in [:fns '~(:name spec)] '~spec))
       nil)
@@ -205,7 +206,7 @@
 
     (defn protocol-extension-form
       [spec]
-      (if p/*cljs*
+      (if (state/cljs?)
         `(do ~@(extend-type-forms spec))
         `(do ~@(extend-forms spec))))
 
@@ -303,259 +304,144 @@
 
 
 
-#?(:clj
+(do :api
 
-   (do :api
+    ;; user API, see concrete usage in tests below
 
-       ;; user API, see concrete usage in tests below
+    (p/defmac generic
+              "create a generic function"
+              [name & cases]
+              (declaration-form
+                (compiled-generic-spec name cases)))
 
-       (p/defmac generic
-                 "create a generic function"
-                 [name & cases]
-                 (declaration-form
-                   (compiled-generic-spec name cases)))
+    (p/defmac generic+
+              "add new cases to an existant generic
+            all given arities must already be known"
+              [name & cases]
+              (extension-form
+                (compiled-generic-spec name cases)))
 
-       (p/defmac generic+
-                 "add new cases to an existant generic
-               all given arities must already be known"
-                 [name & cases]
-                 (extension-form
-                   (compiled-generic-spec name cases)))
+    (p/defmac fork
+              "create a new generic from an existing one
+            does not alter the original"
+              [parent-name name & cases]
+              (let [names (derive-name name)
+                    parent-spec (get-spec! parent-name)
+                    base-spec (merge parent-spec names)
+                    extension-spec (compiled-generic-spec name cases)
+                    spec (extend-spec base-spec extension-spec)]
+                (identity ;p/pprob 'fork
+                  (declaration-form spec))))
 
-       (p/defmac fork
-                 "create a new generic from an existing one
-               does not alter the original"
-                 [parent-name name & cases]
-                 (let [names (derive-name name)
-                       parent-spec (get-spec! parent-name)
-                       base-spec (merge parent-spec names)
-                       extension-spec (compiled-generic-spec name cases)
-                       spec (extend-spec base-spec extension-spec)]
-                   (identity ;p/pprob 'fork
-                     (declaration-form spec))))
+    (p/defmac compile-all! []
+              `(do ~@(map protocol-extension-form (vals (get-reg)))))
 
-       (p/defmac compile-all! []
-                 `(do ~@(map protocol-extension-form (vals (get-reg)))))
+    ;; extend-type
 
-       ;; extend-type
+    (defn impl-body->cases
+      [tag [x1 & xs :as all]]
+      (let [bodify (fn [[b1 & bs]]
+                     (if-not bs b1
+                                (list* 'do b1 bs)))]
+        (if (vector? x1)
+          [(list x1 tag (bodify xs))]
+          (map (fn [[argv & bs]]
+                 (list argv tag (bodify bs)))
+               all))))
 
-       (defn impl-body->cases
-         [tag [x1 & xs :as all]]
-         (let [bodify (fn [[b1 & bs]]
-                        (if-not bs b1
-                                   (list* 'do b1 bs)))]
-           (if (vector? x1)
-             [(list x1 tag (bodify xs))]
-             (map (fn [[argv & bs]]
-                    (list argv tag (bodify bs)))
-                  all))))
+    (defn implement [tag [name & body :as form]]
 
-       (defn implement [tag [name & body :as form]]
+      (if (get (get-reg) name)
+        `(generic+ ~name ~@(impl-body->cases tag body))
+        ;; TODO do I want to restore that ? it does not works well with refreshing
+        (if-let [p (-> (resolve name) meta :protocol)]
+          (identity ; p/pprob 'implement-raw-proto p/*cljs*
+            `(extend-protocol ~(symbol p)
+               ~@(doall (mapcat (fn [t] [t form]) (t/classes tag))))))))
 
-         (if (get (get-reg) name)
-           `(generic+ ~name ~@(impl-body->cases tag body))
-           ;; TODO do I want to restore that ? it does not works well with refreshing
-           (if-let [p (-> (resolve name) meta :protocol)]
-             (identity ; p/pprob 'implement-raw-proto p/*cljs*
-               `(extend-protocol ~(symbol p)
-                  ~@(doall (mapcat (fn [t] [t form]) (t/classes tag))))))))
+    (p/defmac type+
+              "like extend type"
+              [tag & impls]
+              `(do ~@(mapv #(implement tag %) impls)))
 
-       (p/defmac type+
-                 "like extend type"
-                 [tag & impls]
-                 `(do ~@(mapv #(implement tag %) impls)))
-
-       ))
-
-(comment
-  (extension-form (get-spec! 'ENV_joining_+__generic))
-  (generic g1 [x]
-           ;; prim type impl
-           :vec :g1vec
-           ;; this type is a group
-           ;; under the hood it implements for all collections
-           :coll [:g1coll x]
-           ;; group litteral can be handy
-           #{:key :sym} :key-or-sym)
-
-
-
-  (meta g1)
-
-  (p/assert
-    (g1 [])
-    (g1 #{})
-    (g1 '())
-    (g1 'a)
-    (g1 :a))
-
-  ;; extension
-  (generic+ g1 [x]
-            ;; str impl
-            :str [:str x]
-            ;; if a last expresion is given it extends Object
-            [:unknown x])
-
-  #?(:clj (do (get-spec! 'g1)
-              (implementers (get-spec! 'g1))
-              (get-reg)))
-
-  (p/assert
-    (g1 "a")
-    (g1 (atom {})))
-
-  ;; poly arity exemple
-  (generic g2
-           ([x y]
-            :vec [:g2vec x y]
-            :coll [:g2coll x y]
-            :num [:g2num x y]
-            :any [:g2any x y])
-           ([x y z]
-            :coll [:coll x y z])
-           ;; variadic arity
-           ([x y z & more]
-            :any
-            [:variadic x y z more]))
-
-  (p/assert
-    (= (g2 [] 1)
-       [:g2vec [] 1])
-    (= (g2 #{} 1)
-       [:g2coll #{} 1])
-    (= (g2 #{} 1 2)
-       [:coll #{} 1 2])
-    (= (g2 "me" 1 2 3 4)
-       [:variadic "me" 1 2 '(3 4)])
-    (= (g2 :iop 1 2 3 4)
-       [:variadic :iop 1 2 '(3 4)]))
-
-  (generic+ g2
-            ([a b] :vec [:g2vec2 a b])
-            ([a b c & ds] :str [:variadstr a b c ds]))
-
-  ;; extension of an existing generic
-
-  (p/assert
-    (= (g2 [] 1)
-       [:g2vec2 [] 1])
-    (= (g2 "me" 1 2 3 4)
-       [:variadstr "me" 1 2 '(3 4)]))
-
-  ;; fork is creating a new generic from an existing one
-  ;; it inherit all impls and extend/overide it with given implementations
-  (fork g2 g2+
-        ([a b] :lst [:g2+seq2 a b])
-        ([a b c & ds] :str [:g2+variadstr a b c ds]))
-
-  (p/assert
-
-    (= (g2 () 2) [:g2coll () 2])
-    (= (g2+ () 2) [:g2+seq2 () 2])
-
-    ;; original untouched
-    (= (g2+ "me" 1 2 3 4)
-       [:g2+variadstr "me" 1 2 '(3 4)])
-
-    ;; original untouched
-    (= (g2 "me" 1 2 3 4)
-       [:variadstr "me" 1 2 '(3 4)])
     )
 
-  #?(:clj (get-spec! 'g2+))
+(do :extension
 
-  (p/assert
+    (defn conj-type [reg {:keys [tag childs parents]}]
+      (reduce
+        (fn [reg p]
+          (update reg p (fnil conj #{}) tag))
+        (update reg tag (fnil into #{}) childs)
+        parents))
 
-    (= (g2 () 2) [:g2coll () 2])
-    (= (g2+ () 2) [:g2+seq2 () 2])
+    (p/defmac tag+
 
-    ;; original untouched
-    (= (g2+ "me" 1 2 3 4)
-       [:g2+variadstr "me" 1 2 '(3 4)])
+              "add a type tag to the type registry (living in asparagus.boot.state/state)
+               tag: the typetag we are defining/extending (a keyword)
+               childs: a seq of other typetags or classes that belongs to the defined tag
+               parents: a seq of other typetags that the defined tag belongs to
+               & impls: optional generic implementations for the defined tag"
 
-    ;; original untouched
-    (= (g2 "me" 1 2 3 4)
-       [:variadstr "me" 1 2 '(3 4)])
-    )
+              ([{:keys [tag childs parents impls]}]
+               (let [exists? (state/get-in [:types tag])
+                     generic-updates
+                     (if exists? (cons tag parents) parents)]
 
-  (fork g2+ g2+clone)
+                 (state/swap!
+                   update :types
+                   conj-type
+                   {:tag tag
+                    :childs childs
+                    :parents parents})
 
-  ;; type+ is like extendtype
-  ;; implement several generics at a time for a given type
+                 (state/swap! assoc :guards ~(t/predmap))
 
-  (type+ :fun
-         (g1 [x] :g1fun)
-         (g2 [x y] [:g2fun2 x y]))
+                 `(do
+                    ~(sync-types-form ~(vec generic-updates))
+                    ~(when impls `(type+ ~tag ~@impls)))))
 
-  (p/assert
-    (= [:g2fun2 inc 1] (g2 inc 1))
-    (= :g1fun (g1 (fn [a]))))
+              ([tag childs]
+               `(tag+ ~tag ~childs []))
+              ([tag childs parents & impls]
+               `(tag+ ~{:tag tag :childs childs :parents parents :impls (vec impls)})))
 
-  ;; the implementations given to type+ does not have to be asparagus generics,
-  ;; it can be regular clojure protocols functions
-  ;; CAUTION: it will not reflect type hierarchy further changes as with generics
+    (p/defmac deft
 
-  (defprotocol Prot1 (prot1-f [x] [x y]))
+              "declare a new usertype (a clojure record)
+               tag: the typetag (keyword) corresponding to our freshly created record
+               fields: the fields of our record
+               parents: a seq of other typetags that our type belongs to
+               & impls: optional generic implementations for the defined type"
 
-  (meta (resolve 'prot1-f))
+              ([{:as spec
+                 :keys [tag parents impls fields childs class-sym]}]
+               (let [class-str (apply str (map str/capitalize (str/split (name tag) #"\.")))
+                     class-sym (or class-sym (symbol class-str))
+                     spec (update spec :childs (fnil conj []) class-sym)]
+                 `(do (defrecord ~class-sym ~fields)
+                      (tag+ ~spec))))
+              ([tag fields]
+               `(deft ~tag ~fields []))
+              ([tag fields parents & impls]
+               `(deft ~{:tag tag :parents parents :impls (vec impls) :fields fields})))
 
-  (type+ :fun
-         (g1 [x] :g1fun)
-         (g2 [x y] [:g2fun2 x y])
-         ;; a raw protocol function
-         (prot1-f ([x] "prot1-f fun")
-                  ([x y] "prot1-f fun arity 2"))) ;; <- here;; if childs are added to :fun, prot1-f will not be sync! so, use at your own risk...
+    (comment
 
-  (p/assert
-    (= "prot1-f fun" (prot1-f inc))
-    (= "prot1-f fun arity 2" (prot1-f inc 42)))
+      (get-reg)
+      (tag+ :iop.fop [:vec :set] [:hash])
+
+      (t/classes :map)
+
+      (macroexpand '(tag+ :iop.fop [:vec :set] [:hash]))
+
+      (deft :pou.pouet [iop foo] nil
+            #_(g1 [x] "g1foo"))
+
+      (deft {:tag :pouet
+             :fields [iop foo]
+             :class-sym POUUUUUET
+             #_(g1 [x] "g1foo")})))
 
 
-  #_(p/error "stop")
-
-  (generic sip'
-           ([a b]
-            :vec (conj a b)
-            :map (apply assoc a b)
-            :set (conj a b)
-            :lst (concat a [b])
-            :str (str a (.toString b))
-            :sym (symbol (sip' (name a) (.toString b)))
-            :key (keyword (sip' (name a) (.toString b))))
-           ([a b & xs]
-            (apply sip' (sip' a b) xs)))
-
-  (p/assert
-    (= (sip' [] 1 2 3)
-       [1 2 3])
-    (= (sip' #{} 1 2 3)
-       #{1 2 3}))
-
-  (generic valid'
-           [x]
-           :nil nil
-           :map (when (every? valid' (vals x)) x)
-           :coll (when (every? valid' x) x)
-           :word :validword
-           :any x)
-
-  (p/assert
-    (not (valid' [nil 1 nil]))
-    (valid' [1 2 3])
-    (valid' #{1 2 3})
-    (valid' {:a 1 :b 2})
-    (not (valid' {:a 1 :b 2 :c nil})))
-
-  #_(clojure.walk/macroexpand-all '(generic+ valid'
-                                             [x] :key :validkey))
-
-  (generic+ valid'
-            [x] :key :validkey)
-
-  #?(:clj (get-spec! 'valid'))
-
-  (p/assert
-    (= :validkey (valid' :a))
-    (= :validword (valid' 'a)))
-  )
 
