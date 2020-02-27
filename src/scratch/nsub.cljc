@@ -1,4 +1,4 @@
-(ns boot.nsub
+(ns scratch.nsub
   (:require
     [clojure.core :as c]
     [clojure.string :as str]
@@ -8,7 +8,7 @@
     [boot.state :as st]
     [boot.prelude :as u])
   #?(:cljs (:require-macros [boot.prelude :refer [use!]]
-                            [boot.nsub :refer [nsub]])))
+                            [scratch.nsub :refer [nsub]])))
 
 (use!)
 
