@@ -30,7 +30,7 @@
           [:unknown x])
 
 #?(:clj (do (g/get-spec! 'g1)
-            (g/implementers (get-spec! 'g1))
+            (g/implementers (g/get-spec! 'g1))
             (g/get-reg)))
 
 (p/assert

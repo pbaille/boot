@@ -395,11 +395,11 @@
                     :childs childs
                     :parents parents})
 
-                 (state/swap! assoc :guards ~(t/predmap))
+                 (state/swap! assoc :guards (t/predmap))
 
                  `(do
-                    ~(sync-types-form ~(vec generic-updates))
-                    ~(when impls `(type+ ~tag ~@impls)))))
+                    ~(sync-types-form (vec generic-updates))
+                    ~(when (seq impls) `(type+ ~tag ~@impls)))))
 
               ([tag childs]
                `(tag+ ~tag ~childs []))

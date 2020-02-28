@@ -45,6 +45,10 @@
              {:env ~'&env :form ~'&form}]
      ~@body))
 
+(defmacro targeting-cljs [& xs]
+  `(binding [*expansion-state* {:env {:ns true}}]
+     ~@xs))
+
 (defn swap! [f & args]
   (c/swap! state update (compilation-target) #(apply f % args)))
 
