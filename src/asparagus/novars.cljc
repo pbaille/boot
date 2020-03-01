@@ -1,4 +1,4 @@
-(ns asparagus.cross
+(ns asparagus.novars
   (:refer-clojure
     :exclude [eval assert resolve let case])
   (:require
@@ -28,7 +28,7 @@
       ;;misc
       call*]])
   #?(:cljs (:require-macros
-             [asparagus.cross :refer
+             [asparagus.novars :refer
               [env! fne defne defexpansion E+ E- !! ppenv updxp ppdoc init-top-forms
                ;; asparagus defined top forms
                check is isnt
@@ -361,8 +361,6 @@
     ;; at: a Path representing current position
     ;; members: a nested map holding environment bindings
 
-    #_(defrecord Env [at members])
-
     (g/deft :env [at members])
 
     (do :base
@@ -597,12 +595,7 @@
 
        (def declarations (atom []))
 
-       (defn add-declaration! [x]
-         (swap! declarations conj x))
 
-       (defn registered-evaluation [x]
-         (swap! declarations conj x)
-         (c/eval x))
 
        ;; if this flag is on
        ;; all defined env members will be assigned to vars
@@ -616,6 +609,24 @@
        ;; holds env members-symbols that can be used at ns level
        ;; this atom will be populated by main asparagus macros
        (def top-forms (atom #{}))
+
+       (do :declarations
+
+           (defn clj-target? [target] (or (not target) (= :clj target)))
+           (defn cljs-target? [target] (or (not target) (= :cljs target)))
+
+           (defn add-declaration! [x & [target]]
+             (swap! declarations
+                    conj
+                    (condp = target
+                      :cljs {:cljs x}
+                      :clj {:clj x}
+                      x)))
+
+           (defn registered-evaluation! [x & [target]]
+             (add-declaration! x target)
+             (when (clj-target? target)
+               (c/eval x))))
 
        (do :vars
 
@@ -635,18 +646,26 @@
                   (str/join "_" (.xs p))
                   '__ (or (.mkey p) 'val)))
 
-           (defn init-pathvar! [p]
-             (registered-evaluation
-               `(declare ~(path->varsym p))))
+           (defn init-pathvar! [p & [target]]
+             (registered-evaluation!
+               `(declare ~(path->varsym p))
+               target))
 
-           (defn set-pathvar! [p v]
-             (registered-evaluation
-               `(def ~(path->varsym p) ~v)))
+           (defn set-pathvar! [p v & [target]]
+             (registered-evaluation!
+               `(def ~(path->varsym p) ~v)
+               target))
 
-           (defn deep-merge-pathvar! [p v]
+           (defn deep-merge-pathvar! [p v & [target]]
              #_(p/pp '----- (path->varsym p) v)
-             (registered-evaluation
-               `(alter-var-root (var ~(path->varsym p)) deep-merge ~v))))
+             (let [clj-expr
+                   (when (clj-target? target)
+                     `(alter-var-root (var ~(path->varsym p)) deep-merge ~v))
+                   cljs-expr
+                   (when (cljs-target? target)
+                     `(set! ~(path->varsym p) (deep-merge ~(path->varsym p) ~v)))]
+                  (c/eval clj-expr)
+                  (add-declaration! {:clj clj-expr :cljs cljs-expr}))))
 
        (do :clean
 
@@ -827,7 +846,7 @@
            #_(pp 'resolve x (path? x))
            (cp x
                env-access? x ;(prob 'env-access x)
-               path? (path->varsym x) #_(if @varmode (path->varsym x) `(env-access ~x))
+               path? (if @varmode (path->varsym x) `(env-access ~x))
                holycoll? ($ x (p resolve e))
                x))
 
@@ -885,7 +904,7 @@
                      vary-meta deep-merge {(.mkey p) x}))
 
         (defn env-declare-member [e p]
-          (let [known? (c/resolve (path->varsym p))]
+          (let [known? (if @varmode (c/resolve (path->varsym p)) (bubfind e p))]
                (if (and (not known?) (mpath? p))
                  (env-add-member e p ::unbound)
                  e)))
@@ -934,37 +953,42 @@
     #?(:clj
        (do :side-effective-env-manipulation
 
-           (defn env-add-member! [p x]
-             (add-declaration! `(swap! E env-add-member (path '~p) '~x))
+           (defn env-add-member! [p x & [target]]
+             (add-declaration! {:clj `(swap! E env-add-member (path '~p) '~x)})
              (swap! E env-add-member p x))
 
-           (defn env-declare-member! [p]
-             (add-declaration! `(swap! E env-declare-member (path '~p)))
+           (defn env-declare-member! [p & [target]]
+             (add-declaration! {:clj `(swap! E env-declare-member (path '~p))})
              (swap! E env-declare-member p)
-             (when @varmode (init-pathvar! p)))
+             (when @varmode (init-pathvar! p target)))
 
-           (defn env-compile-and-add-member! [p x]
+           (defn env-compile-and-add-member! [p x & [target]]
              (let [{:as m r :resolved at :at} (env-detailed-steps (mv @E p) x)]
-                  (add-declaration! `(swap! E env-add-member (path '~at) ~r))
+                  (add-declaration! {:clj `(swap! E env-add-member (path '~at) ~r)})
                   (swap! E #(-> % (env-add-member at (c/eval r)) (env-add-meta at m)))
-                  (when @varmode (deep-merge-pathvar! p r))))
+                  (when @varmode (deep-merge-pathvar! p r target))))
 
-           (defn env-compiled-effect! [at x]
+           (defn env-compiled-effect! [at x & [target]]
              #_(p/pp "compiled effect " at x)
              #_(p/pp "cljs compiled "
                      (state/targeting-cljs (res (mv @E at) x)))
-             (let [compiled {:clj (res (mv @E at) x)
-                             :cljs (state/targeting-cljs (res (mv @E at) x))}]
+             (let [compiled
+                   {:clj
+                    (when (clj-target? target)
+                      (res (mv @E at) x))
+                    :cljs
+                    (when (cljs-target? target)
+                      (state/targeting-cljs (res (mv @E at) x)))}]
                   (add-declaration! compiled)
                   (c/eval (:clj compiled))))
 
            ;; removing members ---
 
-           (defn env-clear-member! [p]
+           (defn env-clear-member! [p & [target]]
              (let [p (path p)]
-                  (when @varmode (clean-member-vars! p))
-                  (add-declaration! `(swap! E env-rem-member ~p))
-                  (swap! E env-rem-member p)))
+                  (add-declaration! {:clj `(swap! E env-rem-member ~p)})
+                  (swap! E env-rem-member p)
+                  (when @varmode (clean-member-vars! p))))
 
            (defn E-minus [at [x1 & rxs :as xs]]
              (when xs
@@ -1007,6 +1031,9 @@
                   p (path (car x) :upd)]
                  (bubfind e (path (car x) :upd))))
 
+           (defn env-upd_targets-expr? [x]
+             (and (seq? x) (= 'targets (first x))))
+
            (defn env-upd_split
              "handle vectors and map literals semantics of the E+ macro
                one level only, the recursion will be eventually done by env-upds"
@@ -1031,6 +1058,9 @@
                (vec? x1)
                (concat (env-upd_split x1)
                        (env-upd_split (rest xs)))
+
+               #_(env-upd_targets-expr? x1)
+               #_()
 
                ;; else
                (cons {root-path x1} (env-upd_split (rest xs)))
@@ -1070,6 +1100,13 @@
                       string?
                       [[:def (path from :doc) x]]
 
+                      env-upd_targets-expr?
+                      (let [ts (apl hash-map (next x))]
+                           (mapcat (fn [[t x]]
+                                     (map #(conj % t)
+                                          (env-upds e x from)))
+                                   ts))
+
                       (p env-upd_upd-expr? (mv e from))
                       (let [e' (mv e from)
                             [_ updf] (env-upd_upd-expr? e' x)]
@@ -1082,24 +1119,26 @@
                      :links [:link (epath (ppath from)) x]
                      :fx [:fx (epath (ppath from)) x]
                      :raw-fx [:raw-fx nil x]
+                     ;:upd [:def (epath from) x :clj]
+                     ;:mac [:def (epath from) x :clj]
                      [:def (epath from) x])])))
 
            (defn env-upd_exe
              "takes a serie of base operation litterals (as returned by env-upds, refer to its docstring for details)
            and performs them sequencially on the global environment"
              [u]
-             (doseq [[verb at x] u]
-               #_(println verb at)
+             (doseq [[verb at x target] u]
+               (println verb at)
                (try
                  (condp = verb
-                   :link (env-add-member! (path at :links) x)
-                   :declare (env-declare-member! at)
-                   :fx (env-compiled-effect! at x)
-                   :raw-fx (do (registered-evaluation x))
-                   :def (env-compile-and-add-member! at x))
+                   :link (env-add-member! (path at :links) x target)
+                   :declare (env-declare-member! at target)
+                   :fx (env-compiled-effect! at x target)
+                   :raw-fx (registered-evaluation! x target)
+                   :def (env-compile-and-add-member! at x target))
                  (catch Exception err
                    (error "\nenv-upd error compiling:\n"
-                          (pretty-str [verb at x])
+                          (pretty-str [verb at x target])
                           "\n" (.getMessage err)))))
              @E))))
 
@@ -1116,13 +1155,7 @@
             ~@(map (fn [u]
                      `(env-upd_exe (env-upds @E '~u)))
                    (env-upd_split xs))
-            (-> @E :members :val))
-         #_`(do #_(when (symbol? (first xs))
-                    `(println "E+ " '~(first xs)))
-              ~@(map (fn [u]
-                       `(env-upd_exe @E (env-upds @E '~u)))
-                     (env-upd_split xs))
-              (-> @E :members :val)))
+            (-> @E :members :val)))
 
        (defmacro E-
          "removes given member-paths|coresponding-symbols from the global env
@@ -1211,6 +1244,8 @@
 ;; for a gentle introduction to E+, please refer to ./tutorial.clj
 ;; ------------------------------------------------------------------------------
 
+#_(E+ (targets :clj [exp asparagus.novars/exp]))
+
 (do :asparagus
 
     (rEset!)
@@ -1218,13 +1253,13 @@
     (do :base
 
         "in this section we will define the most basic forms that asparagus will build upon
-         let, lambda, loop, cs (same semantics as asparagus.boot/cs)
-         those version will be hygienic in the sense that they will replace all introduced binding symbols with gensyms"
+              let, lambda, loop, cs (same semantics as asparagus.boot/cs)
+              those version will be hygienic in the sense that they will replace all introduced binding symbols with gensyms"
 
         (E+
 
           env
-          [exp:val asparagus.cross/exp
+          [exp:val asparagus.novars/exp
 
            add-sub
            ["add a substitution to an environment at current location
@@ -1277,9 +1312,9 @@
 
             ;;main
             "takes an environment and a binding pattern
-              return a tuple [e p] where
-              e: new environment with uniq symbols substitutions
-              p: the pattern with all syms made uniq"
+                   return a tuple [e p] where
+                   e: new environment with uniq symbols substitutions
+                   p: the pattern with all syms made uniq"
             (c/fn [e pat]
               (c/let [pat (.expand-keys-pattern pat)
                       shadenv (env.add-subs e (.pat->submap pat))]
@@ -1291,7 +1326,7 @@
            fn
            {:doc
             "we will use this version of lambda to build asparagus,
-              it will ultimatly be replaced by the 'f macro (and friends)"
+                   it will ultimatly be replaced by the 'f macro (and friends)"
 
             parse
             (c/fn [[fst & nxt :as all]]
@@ -1585,9 +1620,9 @@
            qualify
            [
             "takes an environment e and an expression x
-             it will turn all resolvable symbols into paths, using bubbling resolution
-             (see bubfind and qualsym in the [:env :getters] section)
-             macro calls will be handled differently, the verb will be qualified, the expression marked, and the arguments left as is"
+                  it will turn all resolvable symbols into paths, using bubbling resolution
+                  (see bubfind and qualsym in the [:env :getters] section)
+                  macro calls will be handled differently, the verb will be qualified, the expression marked, and the arguments left as is"
 
             fail
             ["the function that is called when a symbol cannot be qualified"
@@ -1665,6 +1700,8 @@
           __
           ["the comment macro"
            :mac (fn [_ _])]))
+
+
 
     (E+ composite
 
@@ -1881,6 +1918,9 @@
 
         )
 
+    #_(pp (env-inspect 'env.exp))
+    #_(error)
+
     (E+ env
         {
          expand
@@ -1892,6 +1932,7 @@
 
           mk-fn
           (fn [e]
+            #_(println "mkfn")
             (let [expand-module (env.get e 'env.expand)
                   get-expanding-step
                   (fn [k]
@@ -1913,7 +1954,7 @@
           raw
           [
            "takes an environment e and an expression x
-            will handle substitutions and macro calls"
+                 will handle substitutions and macro calls"
            (fn [e x]
              (cp x
                  p/quote? x
@@ -1965,7 +2006,7 @@
           method-calls
           [
            "this compilation step will insert § in front of sexpr starting with a litteral vec or map
-            and will handle object oriented syntax (sexpr starting with a keyword) like the janet language do"
+                 and will handle object oriented syntax (sexpr starting with a keyword) like the janet language do"
 
            (fn [e x]
              (cp x
@@ -2008,7 +2049,9 @@
             (env.exp:val e (qq (exp:val . ~xs)))
             (qq '~(env.exp:val e (car xs)))))
 
-        :links {exp env.exp})
+        :links {exp env.exp}
+
+        )
 
     ;; misc
     (E+
@@ -2113,6 +2156,7 @@
 
     (init-top-forms check is isnt)
 
+    ;; import
     (E+ import
         {:doc
          "link the given paths at current location"
@@ -2202,144 +2246,148 @@
 
            )})
 
-    (E+ generic
-        {:doc
-         "an update to define a generic function
-          and its related inspection and extension capabilities
-          it is a wrapper around asparagus.boot.generics functionalities
-          please refer directly asparagus.boot.generics source file for documentation and examples"
+    ;; generics
+    (E+ (targets
+          :clj
+          [generic
+           {:doc
+            "an update to define a generic function
+                  and its related inspection and extension capabilities
+                  it is a wrapper around asparagus.boot.generics functionalities
+                  please refer directly asparagus.boot.generics source file for documentation and examples"
 
-         :upd
-         (fn [e body]
-           (let [gsym (generic.symbol (loc e))]
-                (assoc (generic.module gsym)
-                  :fx (qq (do #_(pp 'gen-init '~(loc e))
-                            (generic.init ~gsym ~body)
-                            #_(pp 'gen-init-end))))))
+            :upd
+            (fn [e body]
+              (let [gsym (generic.symbol (loc e))]
+                   (assoc (generic.module gsym)
+                     :fx (qq (do #_(pp 'gen-init '~(loc e))
+                               (generic.init ~gsym ~body)
+                               #_(pp 'gen-init-end))))))
 
-         reduced:upd
-         (fn [e [argv & decls]]
-           (let [[arg1 varg] (p/gensyms)]
-                (qq (generic
-                      ([~arg1] ~arg1)
-                      (~argv . ~decls)
-                      (~(conj argv '& varg)
-                        . ~(c/mapcat
-                             (fn [[t i]]
-                               [t (qq (reduce (fn ~argv ~i) ~i ~varg))])
-                             (c/partition 2 decls)))))))
+            reduced:upd
+            (fn [e [argv & decls]]
+              (let [[arg1 varg] (p/gensyms)]
+                   (qq (generic
+                         ([~arg1] ~arg1)
+                         (~argv . ~decls)
+                         (~(conj argv '& varg)
+                           . ~(c/mapcat
+                                (fn [[t i]]
+                                  [t (qq (reduce (fn ~argv ~i) ~i ~varg))])
+                                (c/partition 2 decls)))))))
 
-         lambda-wrapper (qq fn)
+            lambda-wrapper (qq fn)
 
-         lambda-case-compiler
-         (fn [e]
-           (fn [case]
-             (nth (exp e (lst* lambda-wrapper case)) 2)))
+            lambda-case-compiler
+            (fn [e]
+              (fn [case]
+                (nth (exp e (lst* lambda-wrapper case)) 2)))
 
-         spec
-         (fn [e gsym bod]
-           (g/compile-cases
-             (g/generic-spec gsym bod)
-             (lambda-case-compiler e)))
+            spec
+            (fn [e gsym bod]
+              (g/compile-cases
+                (g/generic-spec gsym bod)
+                (lambda-case-compiler e)))
 
-         module
-         (fn [gsym]
-           (qq {:val ~gsym
-                inspect:val
-                (fn [] ((g/get-reg) '~gsym))
-                ;; this was previously handled directly in the extend:upd but needs to wait for expansion time
-                extension-form:mac
-                (fn [e bod]
-                  (g/extension-form
-                    (spec e '~gsym bod)))
-                ;; now entend:upd just emit a macro call that will wait expansion time
-                extend:upd
-                (fn [e bod]
-                  {:fx (lst* (qq extension-form) bod)})
+            module
+            (fn [gsym]
+              (qq {:val ~gsym
+                   inspect:val
+                   (fn [] ((g/get-reg) '~gsym))
+                   ;; this was previously handled directly in the extend:upd but needs to wait for expansion time
+                   extension-form:mac
+                   (fn [e bod]
+                     (g/extension-form
+                       (spec e '~gsym bod)))
+                   ;; now entend:upd just emit a macro call that will wait expansion time
+                   extend:upd
+                   (fn [e bod]
+                     {:fx (lst* (qq extension-form) bod)})
 
-                }))
+                   }))
 
-         symbol
-         (fn [n]
-           (path->varsym (path n :generic)))
+            symbol
+            (fn [n]
+              (path->varsym (path n :generic)))
 
-         init:mac
-         (fn [e [n body]]
-           (g/declaration-form
-             (spec e n body)))
+            init:mac
+            (fn [e [n body]]
+              (g/declaration-form
+                (spec e n body)))
 
-         type+
-         {:doc
-          "lets you implement one or several generics for a type.
-           analog to extend-type"
+            type+
+            {:doc
+             "lets you implement one or several generics for a type.
+                   analog to extend-type"
 
-          :upd
-          (fn [e [type & body]]
-            ($ (c/vec body)
-               (fn [[n & xs]]
-                 #_(pp :gentyp+ xs (g/impl-body->cases type xs))
-                 (lst* (p/sym n ".extend")
-                       (g/impl-body->cases type xs)))))}
+             :upd
+             (fn [e [type & body]]
+               ($ (c/vec body)
+                  (fn [[n & xs]]
+                    #_(pp :gentyp+ xs (g/impl-body->cases type xs))
+                    (lst* (p/sym n ".extend")
+                          (g/impl-body->cases type xs)))))}
 
-         :demo
-         (__
+            :demo
+            (__
 
-           ;; generic ----------------
+              ;; generic ----------------
 
-           ;; defines a pul+ generic function
-           ;; with 3 implementations for: strings, symbols and numbers
-           (E+ pul+
-               (generic [a b]
-                        :str (str a b)
-                        :sym (pul+ (str a) (str b))
-                        :num (add a b)))
+              ;; defines a pul+ generic function
+              ;; with 3 implementations for: strings, symbols and numbers
+              (E+ pul+
+                  (generic [a b]
+                           :str (str a b)
+                           :sym (pul+ (str a) (str b))
+                           :num (add a b)))
 
-           ;; inspect
-           (!! (pul+.inspect))
+              ;; inspect
+              (!! (pul+.inspect))
 
-           ;; use
-           (!! (pul+ 1 2))
-           (!! (pul+ "a" 2))
+              ;; use
+              (!! (pul+ 1 2))
+              (!! (pul+ "a" 2))
 
-           ;; extend
-           ;; implement pul+ for vectors
-           (E+ (pul+.extend
-                 [x y]
-                 :vec (catv x y)))
+              ;; extend
+              ;; implement pul+ for vectors
+              (E+ (pul+.extend
+                    [x y]
+                    :vec (catv x y)))
 
-           ;; use the new impl
-           (!! (pul+ [1] [7]))
-           (!! (pul+.inspect))
+              ;; use the new impl
+              (!! (pul+ [1] [7]))
+              (!! (pul+.inspect))
 
-           ;; generic.reduced ---------
+              ;; generic.reduced ---------
 
-           ;; let you define a binary generic function
-           ;; and use reduce for calls with more than 2 arguments
-           (E+ pil+
-               (generic.reduced [a b]
-                                :str (str a b)
-                                :num (+ a b)))
+              ;; let you define a binary generic function
+              ;; and use reduce for calls with more than 2 arguments
+              (E+ pil+
+                  (generic.reduced [a b]
+                                   :str (str a b)
+                                   :num (+ a b)))
 
-           (!! (pil+.inspect))
-           (!! (pil+ 7 9 7))
+              (!! (pil+.inspect))
+              (!! (pil+ 7 9 7))
 
-           ;; type extension
+              ;; type extension
 
-           (E+ (generic.type+
-                 :key
-                 (pul+ [x y] :keypul+)
-                 (pil+ [x y] :keypil+)))
+              (E+ (generic.type+
+                    :key
+                    (pul+ [x y] :keypul+)
+                    (pil+ [x y] :keypil+)))
 
-           (!! (eq (pul+ :aze 1) :keypul+))
-           (!! (eq (pil+ :aze 1) :keypil+))
+              (!! (eq (pul+ :aze 1) :keypul+))
+              (!! (eq (pil+ :aze 1) :keypil+))
 
-           ;; scope checks ------------
+              ;; scope checks ------------
 
-           ;; here we are just checking that generic implementation have access to the local scope
-           (E+ foo.bar.fortytwo:sub (fn [_] 42))
-           (E+ foo.bar.g (generic [x] :num (+ ..fortytwo x)))
-           (!! (foo.bar.g 1)))})
+              ;; here we are just checking that generic implementation have access to the local scope
+              (E+ foo.bar.fortytwo:sub (fn [_] 42))
+              (E+ foo.bar.g (generic [x] :num (+ ..fortytwo x)))
+              (!! (foo.bar.g 1)))}]))
 
+    ;; fn&
     (E+ fn&
 
         ["the idea is to be able to declare concisely variadic functions, while mitigating the performance cost
@@ -2447,7 +2495,7 @@
 
           :notes
           "maybe we should consider to implement sip for named
-           (sipping some chars makes sense but in practice...)"
+                (sipping some chars makes sense but in practice...)"
 
           (check.thunk
             (eq (sip [] 1 2) [1 2])
@@ -2830,6 +2878,7 @@
 
         )
 
+    ;; types
     (E+ types
         ["wrap some of the asparagus.boot.types functionalities
           still have to handle type declaration (auto guard declaration...)
@@ -2847,7 +2896,6 @@
                        [~arg1]
                        . ~(c/interleave prims prims)
                        :any (c/type ~arg1)))}))]
-
         (import types [type]))
 
     (E+ guards
@@ -3073,6 +3121,7 @@
 
         (import testing [assert throws tests eq!]))
 
+    ;; bindings
     (E+ bindings
         {:val
          (fn [xs]
@@ -3198,7 +3247,7 @@
           {:doc
 
            "the binding operation table
-            can be extended via the bind.op+ update"
+                 can be extended via the bind.op+ update"
 
            :val
            {:&
@@ -3280,7 +3329,7 @@
           op+
           [
            "let the user add some new binding operations
-            that will be available for further usages of bind"
+                 that will be available for further usages of bind"
 
            :upd
            (fn [e [name args expr]]
@@ -3718,6 +3767,7 @@
                 [bind])
         )
 
+    ;; lambda
     (E+ lambda
         {:links {cp composite}
 
@@ -4096,21 +4146,21 @@
     (E+ argumentation
         {:doc
          "in asparagus, many functions takes what we can call the object as first argument
-          I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
-          the argumentation function will help to turn this kind of function into a one that takes only the arguments (in the previous exemple: :a 1 :b 2)
-          and return a function that takes only the target object, and return the result.
-          (let [assoc_ (argumentation assoc)
-                assoc-a-and-b (assoc_ :a 1 :b 2)]
-             (assoc-a-and-b {})) ;=> {:a 1 :b 2}
+               I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
+               the argumentation function will help to turn this kind of function into a one that takes only the arguments (in the previous exemple: :a 1 :b 2)
+               and return a function that takes only the target object, and return the result.
+               (let [assoc_ (argumentation assoc)
+                     assoc-a-and-b (assoc_ :a 1 :b 2)]
+                  (assoc-a-and-b {})) ;=> {:a 1 :b 2}
 
-          many of the asparagus functions of this form, have their subjectified version with the same name suffixed with _
-          this is handy, for instance, to create chains of 1 argument functions
-          (> myseq (take_ 3) (dropend_ 2)) will thread 'myseq thru 2 functions, the semantics is analog to core/-> but it is a function
-          the '> function is defined in the :invocation-application-mapping section (the previous one)
-          (>_ (take_ 3) (dropend_ 2)) ;; will return a function that wait for its first argument ('myseq in the previous example)
+               many of the asparagus functions of this form, have their subjectified version with the same name suffixed with _
+               this is handy, for instance, to create chains of 1 argument functions
+               (> myseq (take_ 3) (dropend_ 2)) will thread 'myseq thru 2 functions, the semantics is analog to core/-> but it is a function
+               the '> function is defined in the :invocation-application-mapping section (the previous one)
+               (>_ (take_ 3) (dropend_ 2)) ;; will return a function that wait for its first argument ('myseq in the previous example)
 
-          the idea behind this is to ease function composition, the preference for guards over predicates is also a step in this direction
-          the further 'flow section will introduce some useful functional constructs that go even further (in conjunction with this and guards)"
+               the idea behind this is to ease function composition, the preference for guards over predicates is also a step in this direction
+               the further 'flow section will introduce some useful functional constructs that go even further (in conjunction with this and guards)"
          :val
          (f [g . args]
             (if (pure? args)
@@ -4396,28 +4446,28 @@
             [
 
              "
-             the dive generic function, let you get something inside something else
-             its first argument represent the address of what you want to get
-             the second is the thing in which you want to find it
+                  the dive generic function, let you get something inside something else
+                  its first argument represent the address of what you want to get
+                  the second is the thing in which you want to find it
 
-             it is like core/get but with arguments reversed, and being a generic function, it can be extended.
+                  it is like core/get but with arguments reversed, and being a generic function, it can be extended.
 
-             Also, we can mention that it is a concrete exemple of something that is a function and a macro at the same time
-             here we use a technique that is analog to the one we used in bind (binding operators)
-             the dive module holds a map of operations implementations in dive.ops
-             At expansion time, if the first argument to dive is an sexpr, the verb will be searched in dive.ops
-             if an implementation is found, it will be executed (at expansion time) and the return value will take the place of the original expression
+                  Also, we can mention that it is a concrete exemple of something that is a function and a macro at the same time
+                  here we use a technique that is analog to the one we used in bind (binding operators)
+                  the dive module holds a map of operations implementations in dive.ops
+                  At expansion time, if the first argument to dive is an sexpr, the verb will be searched in dive.ops
+                  if an implementation is found, it will be executed (at expansion time) and the return value will take the place of the original expression
 
-             as an exemple, we use the 'ks operation
-             (dive (ks a b) {:a 1 :b 2 :c 2})
-             ks is resolved in dive.ops and applied to the given args (here :a and :b), producing this form
-             (dive (fn [y] (select-keys y [:a :b]))
-                   {:a 1 :b 2 :c 2})
+                  as an exemple, we use the 'ks operation
+                  (dive (ks a b) {:a 1 :b 2 :c 2})
+                  ks is resolved in dive.ops and applied to the given args (here :a and :b), producing this form
+                  (dive (fn [y] (select-keys y [:a :b]))
+                        {:a 1 :b 2 :c 2})
 
-             functions implement dive so the expansion time work is done, the form will now ready for runtime
+                  functions implement dive so the expansion time work is done, the form will now ready for runtime
 
-             As you may have deduced by yourself, dive.ops can be extended with new operations
-             Keep in mind that it will not alter all previous call to dive, which are already compiled. (this is a good thing :))"
+                  As you may have deduced by yourself, dive.ops can be extended with new operations
+                  Keep in mind that it will not alter all previous call to dive, which are already compiled. (this is a good thing :))"
 
              (generic
                [x y]
@@ -4856,9 +4906,9 @@
 
         [
          "not intended to be used directly
-          prefer using put and upd
-          semantically similar to assoc with different arg order
-          like in dive the first argument is the address (and is used to dispatch)"
+               prefer using put and upd
+               semantically similar to assoc with different arg order
+               like in dive the first argument is the address (and is used to dispatch)"
 
          (generic [k x v]
 
@@ -4980,6 +5030,7 @@
     (E+ (argumentation.definitions
           dive tack))
 
+    ;; obj
     (E+ obj+
         ["an update to declare a new object"
 
@@ -5028,11 +5079,11 @@
 
                 [;; clojure side effects
                  :raw-fx (qq (t/type+
-                            {:tag ~fulltag
-                             :fields ~fields
-                             :parents ~parents
-                             :class-sym ~class-sym
-                             }))
+                               {:tag ~fulltag
+                                :fields ~fields
+                                :parents ~parents
+                                :class-sym ~class-sym
+                                }))
                  ;; constructors (positional and from hashmap)
                  name-sym (qq (f ~fields (merge (~(sym "->" class-sym) . ~fields) ~proto-sym)))
                  proto-sym proto-val
@@ -5200,32 +5251,32 @@
 (when-not @compiled
 
   (defn targetted-declarations [target]
-    (map (fn [d] (if (map? d) (d target) d)) @declarations))
+    (keep (fn [d] (if (map? d) (d target) d)) @declarations))
 
   (defn write-exprs! [filename exprs]
     (spit filename (apply str (interpose "\n" (mapv #(with-out-str (p/pp %)) exprs)))))
 
   (write-exprs! "aspout.clj" (targetted-declarations :clj))
 
-  (write-exprs! "aspout.cljs"
-                (keep (fn [e]
-                        (if (seq? e)
-                          (cond
+  (write-exprs! "aspout.cljs" (targetted-declarations :cljs)
+                #_(keep (fn [e]
+                          (if (seq? e)
+                            (cond
 
-                            (= 'clojure.core/alter-var-root (first e))
-                            (list 'set! (second (second e))
-                                  (list* (nth e 2) (second (second e)) (drop 3 e)))
+                              (= 'clojure.core/alter-var-root (first e))
+                              (list 'set! (second (second e))
+                                    (list* (nth e 2) (second (second e)) (drop 3 e)))
 
-                            (= 'clojure.core/declare (first e))
-                            (cons 'declare (next e))
+                              (= 'clojure.core/declare (first e))
+                              (cons 'declare (next e))
 
-                            (or (= 'clojure.core/swap! (first e))
-                                (= 'clojure.core/defmacro (first e)))
-                            nil
+                              (or (= 'clojure.core/swap! (first e))
+                                  (= 'clojure.core/defmacro (first e)))
+                              nil
 
-                            :else e)
-                          e))
-                      (targetted-declarations :cljs)))
+                              :else e)
+                            e))
+                        (targetted-declarations :cljs)))
 
   (reset! compiled true))
 
