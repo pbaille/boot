@@ -130,6 +130,9 @@
           [p]
           (symbol (path->str p)))
 
+        (defn path->binding-symbol [p]
+          (symbol (clojure.string/replace (path->str p) #"[\.:]" "_")))
+
         #?(:clj (do (defmethod clojure.pprint/simple-dispatch
                       Path [x]
                       (.write *out* (path->str x)))
@@ -950,7 +953,7 @@
 
         )
 
-    #?(:clj
+    #_(:clj
        (do :side-effective-env-manipulation
 
            (defn env-add-member! [p x & [target]]
@@ -1029,7 +1032,7 @@
            (defn env-upd_upd-expr? [e x]
              (cs [? (seq? x)
                   p (path (car x) :upd)]
-                 (bubfind e (path (car x) :upd))))
+                 (bubfind e p #_(path (car x) :upd))))
 
            (defn env-upd_targets-expr? [x]
              (and (seq? x) (= 'targets (first x))))
@@ -1123,7 +1126,7 @@
                      ;:mac [:def (epath from) x :clj]
                      [:def (epath from) x])])))
 
-           (defn env-upd_exe
+           #_(defn env-upd_exe
              "takes a serie of base operation litterals (as returned by env-upds, refer to its docstring for details)
            and performs them sequencially on the global environment"
              [u]
@@ -1145,7 +1148,7 @@
 #?(:clj
    (do :API
 
-       (defmacro E+
+       #_(defmacro E+
          "the main way to extend and update the asparagus global environment
        for implementation details refer to the previous section (:extension)
        for usage, see ./tutorial.clj"
@@ -1157,7 +1160,7 @@
                    (env-upd_split xs))
             (-> @E :members :val)))
 
-       (defmacro E-
+       #_(defmacro E-
          "removes given member-paths|coresponding-symbols from the global env
        ex:
        (E- iop foo)
@@ -1240,15 +1243,75 @@
          (swap! declarations into ($ xs top-form-decl))
          `(do ~@($ xs top-form-decl)))))
 
+(do :alt
+
+    (defn env-upd_expand [[verb at x target]]
+      (try
+        (condp = verb
+
+          :raw-fx x
+          :fx (res (mv @E at) x)
+
+          :link
+          `(swap! E env-add-member (path '~at :links) '~x)
+
+          :declare
+          `(do (swap! E env-declare-member (path '~at))
+               ~(when @varmode `(declare ~(path->varsym at))))
+
+          :def
+          (c/let [source (res (mv @E at) x)
+                at (path (loc @E) at)
+                s1 (gensym)]
+               `(c/let [~s1 ~source]
+                     (swap! E env-add-member (path '~at) ~s1)
+                     ~(when @varmode `(alter-var-root (var ~(path->varsym at)) deep-merge ~s1)))))
+
+        (catch Exception err
+          (error "\nenv-upd error compiling:\n"
+                 (pretty-str [verb at x target])
+                 "\n" (.getMessage err)))))
+
+    (defmacro e+
+      "the main way to extend and update the asparagus global environment
+    for implementation details refer to the previous section (:extension)
+    for usage, see ./tutorial.clj"
+      [& xs]
+      (if-not (seq xs)
+        `(-> @E :members :val)
+        (let [[u & us] (env-upd_split xs)]
+             (println (ffirst u))
+             `(do ~@(map env-upd_expand (env-upds @E u))
+                  (e+ ~@us))))))
 ;; from this point asparagus is built in itself (using E+ macro)
 ;; for a gentle introduction to E+, please refer to ./tutorial.clj
 ;; ------------------------------------------------------------------------------
 
 #_(E+ (targets :clj [exp asparagus.novars/exp]))
+(comment
+
+  (require '[clojure.walk :as walk])
+  (pp (walk/macroexpand-all '(e+ a 1 b (+ a a))))
+
+  (e+ a 1 b (+ a a)
+      rev:mac (fn [e xs] (res e (reverse xs)))
+      c (rev a b +)
+      )
+  (rEset!)
+  (e+ a 1)
+  (e+ b (+ a a))
+  (e+ rev:mac (fn [e xs] ((reverse xs))))
+  (exp @E '(rev a b +))
+  (e+ c (rev a b +))
+
+  (!! c))
+
+
 
 (do :asparagus
 
     (rEset!)
+
 
     (do :base
 
@@ -1256,7 +1319,7 @@
               let, lambda, loop, cs (same semantics as asparagus.boot/cs)
               those version will be hygienic in the sense that they will replace all introduced binding symbols with gensyms"
 
-        (E+
+        (e+
 
           env
           [exp:val asparagus.novars/exp
@@ -1353,9 +1416,19 @@
                 (cons argv ($ body (p exp e)))))
 
             expand
+                (c/fn [e {:keys [name impls]}]
+                  (c/let [name (or name 'rec)
+                          [e n] (hygiene.shadow e name)]
+                    #_(println 'shadowing n)
+                    (lst* `fn n
+                          ($ (seq impls)
+                             (p ..expand-case e)))))
+
+            #_#_expand
             (c/fn [e {:keys [name impls]}]
-              (c/let [name (or name 'rec)
-                      [e n] (hygiene.shadow e name)]
+              (c/let [name' (or name (path->binding-symbol (loc e)))
+                      [e n] (hygiene.shadow e name')
+                      e (if name e (env.add-subs e {'rec n}))]
                 (lst* `fn n
                       ($ (seq impls)
                          (p ..expand-case e)))))
@@ -1462,7 +1535,7 @@
                            (= \_ (first (name b1))))
                      'primitives.let 'primitives.cs.?let)
                    [b1 b2]
-                   (if bs (case bs e)
+                   (if bs (rec bs e)
                           ;; this wrapping is nescessary for the case e eval to nil
                           [e])))
 
@@ -1473,7 +1546,7 @@
                    (cond
                      (not (seq xs)) frm
                      (not (next xs)) (lst `c/or frm [(first xs)]) ;; same thing here
-                     :else (lst `c/or frm (form xs)))))
+                     :else (lst `c/or frm (rec xs)))))
 
             :mac
             (fn [e xs]
@@ -1488,15 +1561,15 @@
                (and (seq? x) (= `c/or (car x))))
 
              remove-useless-ors
-             (fn [x]
+             (fn self [x]
                (cp x
                    or-expr?
                    (cons `c/or
                          (mapcat (fn [y]
-                                   (mapv remove-useless-ors (if (or-expr? y) (cdr y) [y])))
+                                   (mapv self (if (or-expr? y) (cdr y) [y])))
                                  (cdr x)))
                    holycoll?
-                   ($ x rec)
+                   ($ x self)
                    x))
 
              substitutable-sym?
@@ -1642,9 +1715,7 @@
                   (gensym? x)))
 
             (fn [e x]
-
               (cp x
-
                   ;; symbols
                   sym?
                   (cs [qs (qualsym e x)] qs ;; x is qualifiable in e
@@ -1672,7 +1743,8 @@
                   (p/$ x (p rec e))
 
                   ;; else do nothing
-                  x))
+                  x
+                  ))
 
             :strict true
 
@@ -1701,9 +1773,7 @@
           ["the comment macro"
            :mac (fn [_ _])]))
 
-
-
-    (E+ composite
+    (e+ composite
 
         ["the composite module contains some utily to handle composite litterals
           e.g: datastructures litterals with dot notation, for instance [a b . c] or {:a 1 . x}"
@@ -1821,7 +1891,7 @@
          ]
         )
 
-    (E+ quotes
+    (e+ quotes
         [:links {cp composite}
 
          wrap
@@ -1918,10 +1988,7 @@
 
         )
 
-    #_(pp (env-inspect 'env.exp))
-    #_(error)
-
-    (E+ env
+    (e+ env
         {
          expand
          [
@@ -2043,8 +2110,8 @@
                            'env.qualify:strict #(c/get opts :strict %))]
                  (env.expand e (env.qualify e x))))]}
 
-        env.exp:mac
-        (fn [e xs]
+        #_env.exp:mac
+        #_(fn [e xs]
           (if (= 2 (count xs))
             (env.exp:val e (qq (exp:val . ~xs)))
             (qq '~(env.exp:val e (car xs)))))
@@ -2053,8 +2120,12 @@
 
         )
 
+   #_ (p/error "stop")
+
+    #_(!! (qq fn))
+
     ;; misc
-    (E+
+    (e+
 
       ;; importing math basics ops
       ;; because some of those symbols will be rebound
@@ -2101,7 +2172,7 @@
          ;; is equivalent to
          (fn [] (check (pos? 1) (neg? -1)))
          ;; update version (the thunk will be put under the :check attr)
-         (E+ foo (check.thunk (pos? 1) (neg? -1)))
+         (e+ foo (check.thunk (pos? 1) (neg? -1)))
          (!! (foo:check)) ;; will call the thunk
          )}
 
@@ -2126,9 +2197,9 @@
 
        :demo
        (__
-         (E+ (group {:myattr :pouet} foo 1 bar 2))
+         (e+ (group {:myattr :pouet} foo 1 bar 2))
          ;; is equivalent to
-         (E+ foo {:myattr :pouet :val 1}
+         (e+ foo {:myattr :pouet :val 1}
              bar {:myattr :pouet :val 2}))]
 
       tagged:upd
@@ -2142,22 +2213,22 @@
 
        :demo
        (__
-         (E+ (tagged :iop foo 1 bar 2))
+         (e+ (tagged :iop foo 1 bar 2))
          ;; is equivalent to
-         (E+ foo {:tags #{:iop} :val 1}
+         (e+ foo {:tags #{:iop} :val 1}
              bar {:tags #{:iop} :val 2})
 
          ;; it also accept set litterals
-         (E+ (tagged #{:iop :pouet} foo 1 bar 2))
+         (e+ (tagged #{:iop :pouet} foo 1 bar 2))
          ;; is equivalent to
-         (E+ foo {:tags #{:iop :pouet} :val 1}
+         (e+ foo {:tags #{:iop :pouet} :val 1}
              bar {:tags #{:iop :pouet} :val 2})
          )])
 
     (init-top-forms check is isnt)
 
     ;; import
-    (E+ import
+    (e+ import
         {:doc
          "link the given paths at current location"
 
@@ -2206,7 +2277,7 @@
 
            ;; basic usage --------
 
-           (E+
+           (e+
              ;; declaring some random stuff to work with
              foo.bar {a ["foobar a" (fn [] 'foobara)]}
              foo.qux 42
@@ -2228,15 +2299,15 @@
            ;; the :all syntax ----
 
            ;; first we define some random stuff
-           (E+ foot {foota 1 footb 2 footc {n 4}})
+           (e+ foot {foota 1 footb 2 footc {n 4}})
            ;; then we import them all
-           (E+ (import foot :all))
+           (e+ (import foot :all))
            ;; then use it
            (!! (add foota footb footc.n)) ;;=> 7
 
            ;; chain --------------
 
-           (E+ mymodule
+           (e+ mymodule
                [;; import several things at once
                 (import foo [bar qux]
                         foot :all)
@@ -2247,7 +2318,7 @@
            )})
 
     ;; generics
-    (E+ (targets
+    (e+ (targets
           :clj
           [generic
            {:doc
@@ -2335,7 +2406,7 @@
 
               ;; defines a pul+ generic function
               ;; with 3 implementations for: strings, symbols and numbers
-              (E+ pul+
+              (e+ pul+
                   (generic [a b]
                            :str (str a b)
                            :sym (pul+ (str a) (str b))
@@ -2350,7 +2421,7 @@
 
               ;; extend
               ;; implement pul+ for vectors
-              (E+ (pul+.extend
+              (e+ (pul+.extend
                     [x y]
                     :vec (catv x y)))
 
@@ -2362,7 +2433,7 @@
 
               ;; let you define a binary generic function
               ;; and use reduce for calls with more than 2 arguments
-              (E+ pil+
+              (e+ pil+
                   (generic.reduced [a b]
                                    :str (str a b)
                                    :num (+ a b)))
@@ -2372,7 +2443,7 @@
 
               ;; type extension
 
-              (E+ (generic.type+
+              (e+ (generic.type+
                     :key
                     (pul+ [x y] :keypul+)
                     (pil+ [x y] :keypil+)))
@@ -2383,12 +2454,12 @@
               ;; scope checks ------------
 
               ;; here we are just checking that generic implementation have access to the local scope
-              (E+ foo.bar.fortytwo:sub (fn [_] 42))
-              (E+ foo.bar.g (generic [x] :num (+ ..fortytwo x)))
+              (e+ foo.bar.fortytwo:sub (fn [_] 42))
+              (e+ foo.bar.g (generic [x] :num (+ ..fortytwo x)))
               (!! (foo.bar.g 1)))}]))
 
     ;; fn&
-    (E+ fn&
+    (e+ fn&
 
         ["the idea is to be able to declare concisely variadic functions, while mitigating the performance cost
           exemple:
@@ -2458,7 +2529,7 @@
          (fn [e form]
            (exp e (qq (fn . ~(fn&.cases form)))))])
 
-    (E+ joining
+    (e+ joining
         ["a bunch of function for handling monoidish things"
 
          pure
@@ -2632,7 +2703,7 @@
                         ~n* (fn& [x] (apl ~n x ...))
                         ~n+* (fn& [x] (apl ~n+ x ...))])))
              ([x & xs]
-              (apl catv ($ (cons x xs) make-upd))))
+              (apl catv ($ (cons x xs) rec))))
 
            :upd
            (fn [_ xs]
@@ -2714,7 +2785,7 @@
            map map+ map* map+*
            str str* key key* sym sym*]))
 
-    (E+ iterables
+    (e+ iterables
         ["some functions to manipulate iterable structures"
 
          iterg
@@ -2879,7 +2950,7 @@
         )
 
     ;; types
-    (E+ types
+    (e+ types
         ["wrap some of the asparagus.boot.types functionalities
           still have to handle type declaration (auto guard declaration...)
           a deftype like construct should be great too"
@@ -2898,7 +2969,7 @@
                        :any (c/type ~arg1)))}))]
         (import types [type]))
 
-    (E+ guards
+    (e+ guards
         ["guards are like predicates
           but returns their first argument for success
           otherwise nil"
@@ -2986,8 +3057,8 @@
 
            (!! (line? [1 2]))
 
-           (E+ (guard.import neg? 1))
-           (E+ (guard.imports [neg? 1]
+           (e+ (guard.import neg? 1))
+           (e+ (guard.imports [neg? 1]
                               [pos? 1]
                               [gt 2 >]))
            (!! (neg? -2))
@@ -2998,7 +3069,7 @@
         (import guards [guard]
                 guards.builtins :all))
 
-    (E+ testing
+    (e+ testing
         ["the testing module is an attempt to describe tests as data"
 
          throws:mac
@@ -3122,7 +3193,7 @@
         (import testing [assert throws tests eq!]))
 
     ;; bindings
-    (E+ bindings
+    (e+ bindings
         {:val
          (fn [xs]
            (mapcat (p* bind) (partition 2 xs)))
@@ -3342,7 +3413,7 @@
            :demo
            (__
              ;; as an exemple we are redefining the & operation
-             (E+ (bind.op+ & [xs seed] ;; xs are the arguments passed to the operation, y is the expr we are binding
+             (e+ (bind.op+ & [xs seed] ;; xs are the arguments passed to the operation, y is the expr we are binding
                            (bind (zipmap ($ xs keyword) xs) seed)))
 
              ;; when this operation is used
@@ -3768,7 +3839,7 @@
         )
 
     ;; lambda
-    (E+ lambda
+    (e+ lambda
         {:links {cp composite}
 
          parse
@@ -4020,7 +4091,7 @@
                 (exp e ($ bs second)))))
 
     (do :guard-macro
-        (E+ guard:mac
+        (e+ guard:mac
             (f [e (& form [argv . _])]
                (let [(& parsed (ks pat body)) (lambda.parse form)
                      body (qq (when ~body ~(car pat)))]
@@ -4033,7 +4104,7 @@
 
     (do :invoc-apply-map-walk
 
-        (E+
+        (e+
 
           callables
           {wrapper:mac
@@ -4095,19 +4166,19 @@
           ["depth first walk"
            (f
              [x f]
-             (walk x #(dfwalk % f) f))]
+             (walk x #(rec % f) f))]
 
           bfwalk
           ["breadth first walk"
            (f
              [x f]
-             (walk (f x) #(bfwalk % f) id))]
+             (walk (f x) #(rec % f) id))]
 
           walk?
           (f
             [x node? f]
             (cs [nxt (node? x)]
-                ($ nxt #(walk? % node? f))
+                ($ nxt #(rec % node? f))
                 (f x))))
 
         (_ :tries
@@ -4115,7 +4186,7 @@
            (!! #_($ [1 2 3] inc inc)
              ($+ [[1 2 3] [5 6 7]] id range)))
 
-        (E+ (invocation.extend
+        (e+ (invocation.extend
               [x]
               :vec
               (fn& []
@@ -4143,7 +4214,7 @@
                                (mapv list [1 2 3] [1 2 3] [1 2 3]))))
            (qbench (!! (* [add sub add] (list [1 2 3] [1 2 3] [1 2 3]))))))
 
-    (E+ argumentation
+    (e+ argumentation
         {:doc
          "in asparagus, many functions takes what we can call the object as first argument
                I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
@@ -4188,7 +4259,7 @@
 
     (do :$related
 
-        (E+
+        (e+
 
           zip
           ["core/map(ish)"
@@ -4203,7 +4274,7 @@
              ([x f xs]
               (c/reduce (§ f) x xs))
              ([x f y & ys]
-              (red x (* f)
+              (rec x (* f)
                    (* zip vec y ys))
               #_(if (c/every? cons? xs)
                   (* red
@@ -4238,7 +4309,7 @@
              [x size step]
              (let [[pre post] (splat x size)]
                   (if (cons? post)
-                    (cons pre (scan (drop x step) size step))
+                    (cons pre (rec (drop x step) size step))
                     (if (cons? pre)
                       (sip (pure x) pre)
                       (pure x)))))]
@@ -4296,7 +4367,7 @@
 
         )
 
-    (E+ df
+    (e+ df
         ["data function,
           create a function from a data structure that
           apply all functions contained in it (deeply) to further args.
@@ -4358,7 +4429,7 @@
 
     (do :compare
 
-        (E+
+        (e+
 
           eq
           (generic
@@ -4413,7 +4484,7 @@
 
     (do :linear-accesses
 
-        (E+ linear-accesses
+        (e+ linear-accesses
             {mk
              (f1 size
                  (loop [s size ret [['a 'd]]]
@@ -4441,7 +4512,7 @@
 
     (do :dive
 
-        (E+ dive
+        (e+ dive
 
             [
 
@@ -4530,7 +4601,7 @@
 
     (do :flow
 
-        (E+
+        (e+
 
           ;; guard based constructs
           ;; guard composition, filtering, control flow etc...
@@ -4605,7 +4676,7 @@
            (guard
              [x]
              (if (coll? x)
-               (?$ x ?deep)
+               (?$ x rec)
                x))]
 
           :fx
@@ -4620,14 +4691,14 @@
            (f
              [x f . fs]
              (?let [x (c/and x (§ f x))]
-                   (if (cons? fs) (* ?> x fs) x)))]
+                   (if (cons? fs) (* rec x fs) x)))]
 
           ?<
           ["trying all given guards against x until first non nil result"
            (f
              [x f . fs]
              (c/or (§ f x)
-                   (c/when (cons? fs) (* ?< x fs))))]
+                   (c/when (cons? fs) (* rec x fs))))]
 
           (argumentation.definitions
             ?$ ?$i filt rem ?> ?<)
@@ -4749,7 +4820,7 @@
 
     (do :mlet-mac-at
 
-        (E+ mlet
+        (e+ mlet
             ["let you bind local macros"
              :mac
              (f [e [ms . bod]]
@@ -4769,7 +4840,7 @@
            (exp @E '(mlet [fi (fn [e [p f t]] (exp e (lst 'if p t f)))]
                           (fi (vec? []) :novec (lut [a 1 a 2] :vec)))))
 
-        (E+ let-syms
+        (e+ let-syms
             ["let you introduce a bunch of gensyms easily
               (let-syms [a b c] (list a b c))
               ;=> (G__198743 G__198744 G__198745)"
@@ -4777,7 +4848,7 @@
              (fn [e [xs & bod]]
                (exp e (qq (let [~xs (take (gensyms) ~(count xs))] . ~bod))))])
 
-        (E+ mac
+        (e+ mac
             ["let you define a macro that behave as regular lisps ones do
               e.g: no need to manually thread expansion"
              :mac
@@ -4786,10 +4857,10 @@
 
         (_ :tries
            (exp @E '(mac [p f t] (lst 'if p t f)))
-           (E+ fi:mac (mac [p f t] (lst 'if p t f)))
+           (e+ fi:mac (mac [p f t] (lst 'if p t f)))
            (exp @E '(fi true (lut [a 1 a 2] :pouet) (fn& [] (add ...)))))
 
-        (E+ at
+        (e+ at
             ["like dive but with arguments reversed"
              :mac (mac [x y] (lst 'dive y x))]
 
@@ -4801,7 +4872,7 @@
            (!! (at {:a 1 :b 2 :c 2} (ks :a :b)))
            (!! ((at_ (ks :a :b)) {:a 1 :b 2 :c 2}))))
 
-    (E+ bindings.case
+    (e+ bindings.case
         ["the case form and its variants casu, !case, and !casu"
 
          case
@@ -4902,7 +4973,7 @@
                  (throws (t [:point 1 "io"]))))
           ))
 
-    (E+ tack
+    (e+ tack
 
         [
          "not intended to be used directly
@@ -5027,11 +5098,11 @@
 
           ))
 
-    (E+ (argumentation.definitions
+    (e+ (argumentation.definitions
           dive tack))
 
     ;; obj
-    (E+ obj+
+    (e+ obj+
         ["an update to declare a new object"
 
          name-sym
@@ -5143,7 +5214,7 @@
 
            (ppenv type+)
            ;; definition
-           (E+ (type+ :fut [bar baz]
+           (e+ (type+ :fut [bar baz]
                       (+ [(ks bar baz) (& {:bar !barb :baz bazb} (:fut b))]
                          (fut (+ bar barb)
                               (+ baz bazb)))))
@@ -5151,7 +5222,7 @@
            (!! (+.inspect))
            (!! (type.inspect))
 
-           (E+ (generic.type+ :fut (+ [x y])))
+           (e+ (generic.type+ :fut (+ [x y])))
 
            ;; instantiation
            (!! (fut 1 2))
@@ -5168,7 +5239,7 @@
 
         )
 
-    (E+ org
+    (e+ org
         {:val
          (cf [e (vec? x)]
              ((at org.ops:val :section) e x)
@@ -5243,12 +5314,15 @@
 
     )
 
-(when @compiled
+(macroexpand '(e+ pouet {aze 1 baz aze}))
+(e+ pouet [aze 1 baz aze])
+
+#_(when @compiled
 
   #?(:clj  (load-file "aspout.clj")
      :cljs (load-file "aspout.cljs")))
 
-(when-not @compiled
+#_(when-not @compiled
 
   (defn targetted-declarations [target]
     (keep (fn [d] (if (map? d) (d target) d)) @declarations))
