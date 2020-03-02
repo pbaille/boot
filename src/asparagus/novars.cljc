@@ -74,9 +74,9 @@
 ▐█ ▪▐▌▐█▄▪▐█▐█▪·•▐█ ▪▐▌▐█•█▌▐█ ▪▐▌▐█▄▪▐█▐█▄█▌▐█▄▪▐█
  ▀  ▀  ▀▀▀▀ .▀    ▀  ▀ .▀  ▀ ▀  ▀ ·▀▀▀▀  ▀▀▀  ▀▀▀▀")
 
-  #?(:clj (do (when-let [reset (c/resolve 'rEset!)] (reset))
-              (g/reset-registry!)
-              (p/import-macros let c/let))))
+  (do (when-let [reset (c/resolve 'rEset!)] (reset))
+      (g/reset-registry!)
+      (p/import-macros let c/let)))
 
 ;;env
 ;; ------------------------------------------------------------------------------
@@ -589,168 +589,121 @@
 
     )
 
-#?(:clj
-   (do :state
+(do :state
 
-       ;; the global envirnoment atom
-       ;; will not be used directly by the user
-       (def E (atom env0))
+    ;; the global envirnoment atom
+    ;; will not be used directly by the user
+    (def E (atom env0))
 
-       (def declarations (atom []))
+    ;; if this flag is on
+    ;; all defined env members will be assigned to vars
+    ;; resulting in much better performances (20x faster)
+    (def varmode (atom true))
 
+    ;; asparagus has not yet been compiled
+    ;; it will be turned true at the end of the file (dev convenience)
+    (def compiled (atom nil))
 
+    ;; holds env members-symbols that can be used at ns level
+    ;; this atom will be populated by main asparagus macros
+    (def top-forms (atom #{}))
 
-       ;; if this flag is on
-       ;; all defined env members will be assigned to vars
-       ;; resulting in much better performances (20x faster)
-       (def varmode (atom true))
+    (do :vars
+        (def PATHVAR_PREFIX 'ENV_)
 
-       ;; asparagus has not yet been compiled
-       ;; it will be turned true at the end of the file (dev convenience)
-       (def compiled (atom nil))
+        (def PATHVAR_PATTERN
+          (re-pattern (str ".*" (name PATHVAR_PREFIX) ".*")))
 
-       ;; holds env members-symbols that can be used at ns level
-       ;; this atom will be populated by main asparagus macros
-       (def top-forms (atom #{}))
+        (defn pathvar-sym? [x]
+          (re-matches PATHVAR_PATTERN
+                      (name x)))
 
-       (do :declarations
+        (defn path->varsym [p]
+          (sym PATHVAR_PREFIX
+               (str/join "_" (.xs p))
+               '__ (or (.mkey p) 'val))))
 
-           (defn clj-target? [target] (or (not target) (= :clj target)))
-           (defn cljs-target? [target] (or (not target) (= :cljs target)))
+    (do :clean
 
-           (defn add-declaration! [x & [target]]
-             (swap! declarations
-                    conj
-                    (condp = target
-                      :cljs {:cljs x}
-                      :clj {:clj x}
-                      x)))
+        ;; if we are using vars, we need to keep things clean
 
-           (defn registered-evaluation! [x & [target]]
-             (add-declaration! x target)
-             (when (clj-target? target)
-               (c/eval x))))
+        (defn clean-pathvars! []
+          (doseq [s (shrink+ (keys (ns-publics *ns*)) pathvar-sym?)]
+            (ns-unmap *ns* s)))
 
-       (do :vars
+        #_(defn clean-member-vars! [p]
+            (let [prefix
+                  (-> (ppath p)
+                      path->varsym str
+                      (str/split #"__")
+                      first)]
+                 (doseq [s (shrink+ (keys (ns-publics 'asparagus.cross)) pathvar-sym?)]
+                   (when (re-find (re-pattern prefix) (str s))
+                     #_(println 'removing-member-var s)
+                     (ns-unmap 'asparagus.cross s)))))
 
-           ;; the varmode business
+        (defn clean-member-vars! [p]
+          (let [prefix
+                (-> (ppath p)
+                    path->varsym str
+                    (str/split #"__")
+                    first)]
+               (doseq [s (shrink+ (keys (ns-publics *ns*)) pathvar-sym?)]
+                 (when (re-find (re-pattern prefix) (str s))
+                   #_(println 'removing-member-var s)
+                   (ns-unmap *ns* s)))))
 
-           (def PATHVAR_PREFIX 'ENV_)
+        (defn clean-members-vars! [xs]
+          (doseq [x xs]
+            (clean-member-vars! (path x))))
 
-           (def PATHVAR_PATTERN
-             (re-pattern (str ".*" (name PATHVAR_PREFIX) ".*")))
+        (defn clean-top-forms! []
+          (doseq [s @top-forms]
+            #_(pp 'remove-top-form s)
+            (ns-unmap *ns* s))
+          (reset! top-forms #{}))
 
-           (defn pathvar-sym? [x]
-             (re-matches PATHVAR_PATTERN
-                         (name x)))
+        (defn clean-Evars! []
+          (clean-pathvars!)
+          (clean-top-forms!))
 
-           (defn path->varsym [p]
-             (sym PATHVAR_PREFIX
-                  (str/join "_" (.xs p))
-                  '__ (or (.mkey p) 'val)))
+        (defn rEset!
+          "will clear the global env and clean all vars that have been defined by it"
+          []
+          (reset! E env0)
+          (clean-Evars!)))
 
-           (defn init-pathvar! [p & [target]]
-             (registered-evaluation!
-               `(declare ~(path->varsym p))
-               target))
+    (do :access
 
-           (defn set-pathvar! [p v & [target]]
-             (registered-evaluation!
-               `(def ~(path->varsym p) ~v)
-               target))
+        (defn unbound-error [p]
+          (throw (ex-info (str "Unbound path: " (path->str p))
+                          {:type :unbound
+                           :path p})))
 
-           (defn deep-merge-pathvar! [p v & [target]]
-             #_(p/pp '----- (path->varsym p) v)
-             (let [clj-expr
-                   (when (clj-target? target)
-                     `(alter-var-root (var ~(path->varsym p)) deep-merge ~v))
-                   cljs-expr
-                   (when (cljs-target? target)
-                     `(set! ~(path->varsym p) (deep-merge ~(path->varsym p) ~v)))]
-                  (c/eval clj-expr)
-                  (add-declaration! {:clj clj-expr :cljs cljs-expr}))))
+        (defn unfound-error [p]
+          (throw (ex-info (str "Unfound path: " (path->str p))
+                          {:type :unfound
+                           :path p})))
 
-       (do :clean
+        (defn env-access
+          "arity1 : getting the value at the given path p inside the global env
+        arity 2 : getting the value at the given path p inside the given environment e"
+          ([p] (env-access @E p))
+          ([e p]
+           (cs [found (env-get e p)]
+               (cs (= ::unbound found)
+                   (unbound-error p)
+                   found)
+               (unfound-error p))))
 
-           ;; if we are using vars, we need to keep things clean
+        (defn env-access?
+          "is x an env-access form ?"
+          [x]
+          (and (seq? x)
+               (or (indexof x '`env-access) ;; this handles quoted env-access forms
+                   (indexof x `env-access))))
 
-           (defn clean-pathvars! []
-             (doseq [s (shrink+ (keys (ns-publics *ns*)) pathvar-sym?)]
-               (ns-unmap *ns* s)))
-
-           #_(defn clean-member-vars! [p]
-               (let [prefix
-                     (-> (ppath p)
-                         path->varsym str
-                         (str/split #"__")
-                         first)]
-                    (doseq [s (shrink+ (keys (ns-publics 'asparagus.cross)) pathvar-sym?)]
-                      (when (re-find (re-pattern prefix) (str s))
-                        #_(println 'removing-member-var s)
-                        (ns-unmap 'asparagus.cross s)))))
-
-           (defn clean-member-vars! [p]
-             (let [prefix
-                   (-> (ppath p)
-                       path->varsym str
-                       (str/split #"__")
-                       first)]
-                  (doseq [s (shrink+ (keys (ns-publics *ns*)) pathvar-sym?)]
-                    (when (re-find (re-pattern prefix) (str s))
-                      #_(println 'removing-member-var s)
-                      (ns-unmap *ns* s)))))
-
-           (defn clean-members-vars! [xs]
-             (doseq [x xs]
-               (clean-member-vars! (path x))))
-
-           (defn clean-top-forms! []
-             (doseq [s @top-forms]
-               #_(pp 'remove-top-form s)
-               (ns-unmap *ns* s))
-             (reset! top-forms #{}))
-
-           (defn clean-Evars! []
-             (clean-pathvars!)
-             (clean-top-forms!))
-
-           (defn rEset!
-             "will clear the global env and clean all vars that have been defined by it"
-             []
-             (reset! E env0)
-             (clean-Evars!)))
-
-       (do :access
-
-           (defn unbound-error [p]
-             (throw (ex-info (str "Unbound path: " (path->str p))
-                             {:type :unbound
-                              :path p})))
-
-           (defn unfound-error [p]
-             (throw (ex-info (str "Unfound path: " (path->str p))
-                             {:type :unfound
-                              :path p})))
-
-           (defn env-access
-             "arity1 : getting the value at the given path p inside the global env
-           arity 2 : getting the value at the given path p inside the given environment e"
-             ([p] (env-access @E p))
-             ([e p]
-              (cs [found (env-get e p)]
-                  (cs (= ::unbound found)
-                      (unbound-error p)
-                      found)
-                  (unfound-error p))))
-
-           (defn env-access?
-             "is x an env-access form ?"
-             [x]
-             (and (seq? x)
-                  (or (indexof x '`env-access) ;; this handles quoted env-access forms
-                      (indexof x `env-access))))
-
-           )))
+        ))
 
 (do :steps
 
@@ -931,358 +884,239 @@
                 :expanded expanded
                 :resolved resolved}))
 
-        (defn env-member-add-compiled
-
-          "add a member to the given environment e, at the given path p, compiling the given expression x,
-           holding intermediate compilation steps in environment metadatas
-           returns the updated environment
-
-           if varmode is on, do the bad things ;)"
-
-          [e p x]
-          (let [{:as m r :resolved at :at}
-                (env-detailed-steps (mv e p) x)
-                evaluated (c/eval r)]
-               ;; TODO this thing cannot be here...
-               (when @varmode (deep-merge-pathvar! p r)
-                              #_(set-pathvar! p r))
-               (swap! declarations conj `(swap! E env-add-member (path '~at) ~r))
-               (-> e
-                   (env-add-member at evaluated)
-                   (env-add-meta at m))))
-
         )
 
-    #_(:clj
-       (do :side-effective-env-manipulation
+    (do :updates
 
-           (defn env-add-member! [p x & [target]]
-             (add-declaration! {:clj `(swap! E env-add-member (path '~p) '~x)})
-             (swap! E env-add-member p x))
+        ;; an asparagus update is a description of an environment mutation
+        ;; those functions will be used by the main environment extension form: E+
+        ;; i've written a gentle introduction to asparagus updates in ./tutorial.clj
 
-           (defn env-declare-member! [p & [target]]
-             (add-declaration! {:clj `(swap! E env-declare-member (path '~p))})
-             (swap! E env-declare-member p)
-             (when @varmode (init-pathvar! p target)))
+        (defn env-upd_prepend-declarations [u]
+          #_(pp 'will-prep-decl (doall u))
+          (let [ps
+                (-> (shrink+ u #(= :def (car %)))
+                    ($ #(vector :declare (second %)))
+                    (shrink- (set u)))]
+               (doall (concat ps u))))
 
-           (defn env-compile-and-add-member! [p x & [target]]
-             (let [{:as m r :resolved at :at} (env-detailed-steps (mv @E p) x)]
-                  (add-declaration! {:clj `(swap! E env-add-member (path '~at) ~r)})
-                  (swap! E #(-> % (env-add-member at (c/eval r)) (env-add-meta at m)))
-                  (when @varmode (deep-merge-pathvar! p r target))))
+        (defn env-upd_sort [u]
+          #_(pp 'will-sort-u u)
+          (let [filtype
+                (fn [t] (shrink+ u #(= t (car %))))]
+               (doall (mapcat filtype [:link :declare :raw-fx :fx :def]))))
 
-           (defn env-compiled-effect! [at x & [target]]
-             #_(p/pp "compiled effect " at x)
-             #_(p/pp "cljs compiled "
-                     (state/targeting-cljs (res (mv @E at) x)))
-             (let [compiled
-                   {:clj
-                    (when (clj-target? target)
-                      (res (mv @E at) x))
-                    :cljs
-                    (when (cljs-target? target)
-                      (state/targeting-cljs (res (mv @E at) x)))}]
-                  (add-declaration! compiled)
-                  (c/eval (:clj compiled))))
+        (defn env-upd_upd-expr? [e x]
+          (cs [? (seq? x)
+               p (path (car x) :upd)]
+              (bubfind e p #_(path (car x) :upd))))
 
-           ;; removing members ---
+        (defn env-upd_split
+          "handle vectors and map literals semantics of the E+ macro
+            one level only, the recursion will be eventually done by env-upds"
+          [[x1 x2 & rs :as xs]]
+          (cs
 
-           (defn env-clear-member! [p & [target]]
-             (let [p (path p)]
-                  (add-declaration! {:clj `(swap! E env-rem-member ~p)})
-                  (swap! E env-rem-member p)
-                  (when @varmode (clean-member-vars! p))))
+            ;; done!
+            (not (seq xs)) []
 
-           (defn E-minus [at [x1 & rxs :as xs]]
-             (when xs
-               (concat
-                 (cp x1
-                     symbol? [`(env-clear-member! (path '~(path->sym (path at x1))))]
-                     holymap? (c/mapcat (fn [[k v]] (pp 'iop) (E-minus (path at k) [v])) x1)
-                     vector? (c/mapcat (fn [x] (pp 'o x) (E-minus at [x])) x1))
-                 (E-minus at rxs))))
+            (word? x1)
+            ;; primary path and vector
+            (cs (and (vec? x2) (ppath? (path x1)))
+                (concat ($ (env-upd_split x2) (p hash-map x1))
+                        (env-upd_split rs))
+                (cons {x1 x2} (env-upd_split rs)))
 
-           (_
-             #_(E-minus 'Env root-path '[iop foo])
-             #_(E-minus 'Env root-path '[iop foo [bar baz] {hey {bob [a z e] bae {iop [i o p]}}}])
-             #_(macroexpand '(E- iop foo))
-             #_(macroexpand '(E- iop foo [bar baz] {hey {bob [a z e] bae {iop [i o p]}}})))))
+            ;; map
+            (holymap? x1)
+            (cons x1 (env-upd_split (rest xs)))
+
+            ;; vec
+            (vec? x1)
+            (concat (env-upd_split x1)
+                    (env-upd_split (rest xs)))
+
+            ;; else
+            (cons {root-path x1} (env-upd_split (rest xs)))
+            ))
+
+        (assert
+          (= (env-upd_split '[a 1 b 2]) (list '{a 1} '{b 2}))
+          (= (env-upd_split '[42 foo "iop"]) (list {root-path 42} '{foo "iop"})))
+
+        (defn env-upds
+
+          "destructure an update as taken by the E+ macro into a serie of base operations
+            (not intended to be used directly)
+
+            there is 4 base operations:
+            :declare : declare a member, in order to make it available eventually before it is bound (analog to clojure's declare semantics) [:declare path]
+            :def : evaluate the given expression and  put the result at the given path. [:def path expression]
+            :link : define a link from a path to another [:link path1 path2]
+            :fx : a side effect [:fx path expression]
+           "
+
+          ([e x]
+           (env-upds e x root-path))
+          ([e x from]
+           #_(println 'top x from)
+           (cs (ppath? from)
+               (cp x
+
+                   holymap?
+                   (env-upd_sort
+                     (env-upd_prepend-declarations
+                       (mapcat (fn [[k v]] (env-upds e v (path from k))) x)))
+
+                   vec?
+                   (mapcat #(env-upds e % from) (env-upd_split x))
+
+                   string?
+                   [[:def (path from :doc) x]]
+
+                   (p env-upd_upd-expr? (mv e from))
+                   (let [e' (mv e from)
+                         [_ updf] (env-upd_upd-expr? e' x)]
+                        (env-upds e (updf e' (cdr x)) from))
+
+                   [[:def (path from :val) x]])
+
+               [epath (p path (loc e))]
+               [(condp = (.mkey from)
+                  :links [:link (epath (ppath from)) x]
+                  :fx [:fx (epath (ppath from)) x]
+                  :raw-fx [:raw-fx nil x]
+                  [:def (epath from) x])])))
+
+        (defn env-upd_expand1 [[verb at x target]]
+          (try
+            (condp = verb
+
+              :raw-fx x
+              :fx (res (mv @E at) x)
+
+              :link
+              `(swap! E env-add-member (path '~at :links) '~x)
+
+              :declare
+              `(do (swap! E env-declare-member (path '~at))
+                   ~(when @varmode `(declare ~(path->varsym at))))
+
+              :def
+              (c/let [source (res (mv @E at) x)
+                      at (path (loc @E) at)
+                      s1 (gensym)]
+                `(c/let [~s1 ~source]
+                   (swap! E env-add-member (path '~at) ~s1)
+                   ~(when @varmode `(alter-var-root (var ~(path->varsym at)) deep-merge ~s1)))))
+
+            (catch Exception err
+              (error "\nenv-upd error compiling:\n"
+                     (pretty-str [verb at x target])
+                     "\n" (.getMessage err)))))))
+
+(do :API
+
+    (defn env-inspect
+      "resolve the given symbol in the global env
+    and print a detailed description of it (compilation intermediate values included)"
+      [s]
+      (let [[p x] (bubfind @E (path s))]
+           (println "at: " p)
+           (println "\ndata:")
+           (pp x)
+           (println "\nmeta:")
+           (pp (meta x))
+           (println)))
+
+    (defn source
+      "find the original source code for the given symbol"
+      [s]
+      (c/let [p (path s)
+              mkey (.mkey p)
+              [p x] (bubfind @E (ppath s))]
+        (if mkey
+          (get-in (meta x) [mkey :expr])
+          (reduce (fn [a k] (assoc a k (source (path p k))))
+                  {} (remove #(= :doc %) (keys x))))))
 
     #?(:clj
-       (do :updates
 
-           ;; an asparagus update is a description of an environment mutation
-           ;; those functions will be used by the main environment extension form: E+
-           ;; i've written a gentle introduction to asparagus updates in ./tutorial.clj
+       (do :macros
 
-           (defn env-upd_prepend-declarations [u]
-             #_(pp 'will-prep-decl (doall u))
-             (let [ps
-                   (-> (shrink+ u #(= :def (car %)))
-                       ($ #(vector :declare (second %)))
-                       (shrink- (set u)))]
-                  (doall (concat ps u))))
+           (defmacro !!
+             "a little convenience, that is mainly useful for development
+           takes an expression and compile it at macro expansion time, resulting in an evaluable clojure form"
+             [x]
+             (->> x
+                  (qualify @E)
+                  (expand @E)
+                  (resolve @E)))
 
-           (defn env-upd_sort [u]
-             #_(pp 'will-sort-u u)
-             (let [filtype
-                   (fn [t] (shrink+ u #(= t (car %))))]
-                  (doall (mapcat filtype [:link :declare :raw-fx :fx :def]))))
+           (do :e+
 
-           (defn env-upd_upd-expr? [e x]
-             (cs [? (seq? x)
-                  p (path (car x) :upd)]
-                 (bubfind e p #_(path (car x) :upd))))
+               (defmacro env-upd_expand [& xs]
+                 (when (seq xs)
+                   `(do ~(env-upd_expand1 (first xs))
+                        (env-upd_expand ~@(next xs)))))
 
-           (defn env-upd_targets-expr? [x]
-             (and (seq? x) (= 'targets (first x))))
+               (defmacro e+
+                 "the main way to extend and update the asparagus global environment
+               for implementation details refer to the previous section (:extension)
+               for usage, see ./tutorial.clj"
+                 [& xs]
+                 (if-not (seq xs)
+                   `(-> @E :members :val)
+                   (let [[u & us] (env-upd_split xs)]
+                        (println (ffirst u))
+                        `(do (env-upd_expand ~@(env-upds @E u))
+                             (e+ ~@us))))))
 
-           (defn env-upd_split
-             "handle vectors and map literals semantics of the E+ macro
-               one level only, the recursion will be eventually done by env-upds"
-             [[x1 x2 & rs :as xs]]
-             (cs
+           (defmacro ppenv
+             "a thin wrapper around env-inspect, let you pass an unquoted symbol"
+             [s]
+             `(env-inspect '~s))
 
-               ;; done!
-               (not (seq xs)) []
+           (defmacro updxp
+             "expand the given update call, debug purposes"
+             ([x]
+              `(updxp root-path ~x))
+             ([at [v & args]]
+              `(!! (~(sym v ":upd") (cd @E ~at) '~(vec args)))))
 
-               (word? x1)
-               ;; primary path and vector
-               (cs (and (vec? x2) (ppath? (path x1)))
-                   (concat ($ (env-upd_split x2) (p hash-map x1))
-                           (env-upd_split rs))
-                   (cons {x1 x2} (env-upd_split rs)))
+           (defmacro ppdoc [s]
+             (c/let [[p v] (bubfind @E (path s :doc))
+                     ;; this is emacs related stuff... (the identation of strings in emacs is weird)
+                     indent-first-line? (not (re-find #"^\n.*" v))
+                     indent-size (count (re-find #"\n\s*" v))
+                     vs (if indent-first-line?
+                          (str (apply str (repeat (dec indent-size) " ")) v)
+                          v)]
+               `(do (println '~p "\n")
+                    (println ~vs)
+                    (println))))
 
-               ;; map
-               (holymap? x1)
-               (cons x1 (env-upd_split (rest xs)))
 
-               ;; vec
-               (vec? x1)
-               (concat (env-upd_split x1)
-                       (env-upd_split (rest xs)))
 
-               #_(env-upd_targets-expr? x1)
-               #_()
+           (defn top-form-decl
+             "bring an asparagus macro into the top level,
+           making it available as a regular clojure macro in the current ns"
+             [s]
+             (p/assert (env-find @E (path s))
+                       "unknown path")
+             `(defmacro ~s [~'& xs#]
+                (res @E (list* '~s xs#))))
 
-               ;; else
-               (cons {root-path x1} (env-upd_split (rest xs)))
-               ))
+           (defmacro init-top-forms
+             "bring several asparagus macros into the top level,
+           making them available as regular clojure macros in the current ns"
+             [& xs]
+             (swap! top-forms into xs)
+             #_(swap! declarations into ($ xs top-form-decl))
+             `(do ~@($ xs top-form-decl)))))
 
-           (assert
-             (= (env-upd_split '[a 1 b 2]) (list '{a 1} '{b 2}))
-             (= (env-upd_split '[42 foo "iop"]) (list {root-path 42} '{foo "iop"})))
+    )
 
-           (defn env-upds
-
-             "destructure an update as taken by the E+ macro into a serie of base operations
-               (not intended to be used directly)
-
-               there is 4 base operations:
-               :declare : declare a member, in order to make it available eventually before it is bound (analog to clojure's declare semantics) [:declare path]
-               :def : evaluate the given expression and  put the result at the given path. [:def path expression]
-               :link : define a link from a path to another [:link path1 path2]
-               :fx : a side effect [:fx path expression]
-              "
-
-             ([e x]
-              (env-upds e x root-path))
-             ([e x from]
-              #_(println 'top x from)
-              (cs (ppath? from)
-                  (cp x
-
-                      holymap?
-                      (env-upd_sort
-                        (env-upd_prepend-declarations
-                          (mapcat (fn [[k v]] (env-upds e v (path from k))) x)))
-
-                      vec?
-                      (mapcat #(env-upds e % from) (env-upd_split x))
-
-                      string?
-                      [[:def (path from :doc) x]]
-
-                      env-upd_targets-expr?
-                      (let [ts (apl hash-map (next x))]
-                           (mapcat (fn [[t x]]
-                                     (map #(conj % t)
-                                          (env-upds e x from)))
-                                   ts))
-
-                      (p env-upd_upd-expr? (mv e from))
-                      (let [e' (mv e from)
-                            [_ updf] (env-upd_upd-expr? e' x)]
-                           (env-upds e (updf e' (cdr x)) from))
-
-                      [[:def (path from :val) x]])
-
-                  [epath (p path (loc e))]
-                  [(condp = (.mkey from)
-                     :links [:link (epath (ppath from)) x]
-                     :fx [:fx (epath (ppath from)) x]
-                     :raw-fx [:raw-fx nil x]
-                     ;:upd [:def (epath from) x :clj]
-                     ;:mac [:def (epath from) x :clj]
-                     [:def (epath from) x])])))
-
-           #_(defn env-upd_exe
-             "takes a serie of base operation litterals (as returned by env-upds, refer to its docstring for details)
-           and performs them sequencially on the global environment"
-             [u]
-             (doseq [[verb at x target] u]
-               (println verb at)
-               (try
-                 (condp = verb
-                   :link (env-add-member! (path at :links) x target)
-                   :declare (env-declare-member! at target)
-                   :fx (env-compiled-effect! at x target)
-                   :raw-fx (registered-evaluation! x target)
-                   :def (env-compile-and-add-member! at x target))
-                 (catch Exception err
-                   (error "\nenv-upd error compiling:\n"
-                          (pretty-str [verb at x target])
-                          "\n" (.getMessage err)))))
-             @E))))
-
-#?(:clj
-   (do :API
-
-       #_(defmacro E+
-         "the main way to extend and update the asparagus global environment
-       for implementation details refer to the previous section (:extension)
-       for usage, see ./tutorial.clj"
-         [& xs]
-         `(do #_(when (symbol? (first xs))
-                  `(println "E+ " '~(first xs)))
-            ~@(map (fn [u]
-                     `(env-upd_exe (env-upds @E '~u)))
-                   (env-upd_split xs))
-            (-> @E :members :val)))
-
-       #_(defmacro E-
-         "removes given member-paths|coresponding-symbols from the global env
-       ex:
-       (E- iop foo)
-       (E- {hey {bob [a z e] bae {iop [i o p]}}})
-       "
-
-         [& xs]
-         (cons 'do (E-minus root-path xs)))
-
-       (defmacro !!
-         "a little convenience, that is mainly useful for development
-       takes an expression and compile it at macro expansion time, resulting in an evaluable clojure form"
-         [x]
-         (->> x
-              (qualify @E)
-              (expand @E)
-              (resolve @E)))
-
-       (defn env-inspect
-         "resolve the given symbol in the global env
-       and print a detailed description of it (compilation intermediate values included)"
-         [s]
-         (let [[p x] (bubfind @E (path s))]
-              (println "at: " p)
-              (println "\ndata:")
-              (pp x)
-              (println "\nmeta:")
-              (pp (meta x))
-              (println)))
-
-       (defmacro ppenv
-         "a thin wrapper around env-inspect, let you pass an unquoted symbol"
-         [s]
-         `(env-inspect '~s))
-
-       (defmacro updxp
-         "expand the given update call, debug purposes"
-         ([x]
-          `(updxp root-path ~x))
-         ([at [v & args]]
-          `(!! (~(sym v ":upd") (cd @E ~at) '~(vec args)))))
-
-       (defmacro ppdoc [s]
-         (c/let [[p v] (bubfind @E (path s :doc))
-                 ;; this is emacs related stuff... (the identation of strings in emacs is weird)
-                 indent-first-line? (not (re-find #"^\n.*" v))
-                 indent-size (count (re-find #"\n\s*" v))
-                 vs (if indent-first-line?
-                      (str (apply str (repeat (dec indent-size) " ")) v)
-                      v)]
-           `(do (println '~p "\n")
-                (println ~vs)
-                (println))))
-
-       (defn source
-         "find the original source code for the given symbol"
-         [s]
-         (c/let [p (path s)
-                 mkey (.mkey p)
-                 [p x] (bubfind @E (ppath s))]
-           (if mkey
-             (get-in (meta x) [mkey :expr])
-             (reduce (fn [a k] (assoc a k (source (path p k))))
-                     {} (remove #(= :doc %) (keys x))))))
-
-       (defn top-form-decl
-         "bring an asparagus macro into the top level,
-       making it available as a regular clojure macro in the current ns"
-         [s]
-         (p/assert (env-find @E (path s))
-                   "unknown path")
-         `(defmacro ~s [~'& xs#]
-            (res @E (list* '~s xs#))))
-
-       (defmacro init-top-forms
-         "bring several asparagus macros into the top level,
-       making them available as regular clojure macros in the current ns"
-         [& xs]
-         (swap! top-forms into xs)
-         (swap! declarations into ($ xs top-form-decl))
-         `(do ~@($ xs top-form-decl)))))
-
-(do :alt
-
-    (defn env-upd_expand [[verb at x target]]
-      (try
-        (condp = verb
-
-          :raw-fx x
-          :fx (res (mv @E at) x)
-
-          :link
-          `(swap! E env-add-member (path '~at :links) '~x)
-
-          :declare
-          `(do (swap! E env-declare-member (path '~at))
-               ~(when @varmode `(declare ~(path->varsym at))))
-
-          :def
-          (c/let [source (res (mv @E at) x)
-                at (path (loc @E) at)
-                s1 (gensym)]
-               `(c/let [~s1 ~source]
-                     (swap! E env-add-member (path '~at) ~s1)
-                     ~(when @varmode `(alter-var-root (var ~(path->varsym at)) deep-merge ~s1)))))
-
-        (catch Exception err
-          (error "\nenv-upd error compiling:\n"
-                 (pretty-str [verb at x target])
-                 "\n" (.getMessage err)))))
-
-    (defmacro e+
-      "the main way to extend and update the asparagus global environment
-    for implementation details refer to the previous section (:extension)
-    for usage, see ./tutorial.clj"
-      [& xs]
-      (if-not (seq xs)
-        `(-> @E :members :val)
-        (let [[u & us] (env-upd_split xs)]
-             (println (ffirst u))
-             `(do ~@(map env-upd_expand (env-upds @E u))
-                  (e+ ~@us))))))
 ;; from this point asparagus is built in itself (using E+ macro)
 ;; for a gentle introduction to E+, please refer to ./tutorial.clj
 ;; ------------------------------------------------------------------------------
@@ -1416,22 +1250,22 @@
                 (cons argv ($ body (p exp e)))))
 
             expand
-                (c/fn [e {:keys [name impls]}]
-                  (c/let [name (or name 'rec)
-                          [e n] (hygiene.shadow e name)]
-                    #_(println 'shadowing n)
-                    (lst* `fn n
-                          ($ (seq impls)
-                             (p ..expand-case e)))))
-
-            #_#_expand
             (c/fn [e {:keys [name impls]}]
-              (c/let [name' (or name (path->binding-symbol (loc e)))
-                      [e n] (hygiene.shadow e name')
-                      e (if name e (env.add-subs e {'rec n}))]
+              (c/let [name (or name 'rec)
+                      [e n] (hygiene.shadow e name)]
+                #_(println 'shadowing n)
                 (lst* `fn n
                       ($ (seq impls)
                          (p ..expand-case e)))))
+
+            #_#_expand
+                (c/fn [e {:keys [name impls]}]
+                  (c/let [name' (or name (path->binding-symbol (loc e)))
+                          [e n] (hygiene.shadow e name')
+                          e (if name e (env.add-subs e {'rec n}))]
+                    (lst* `fn n
+                          ($ (seq impls)
+                             (p ..expand-case e)))))
 
             :mac
             (c/fn [e form]
@@ -2112,15 +1946,15 @@
 
         #_env.exp:mac
         #_(fn [e xs]
-          (if (= 2 (count xs))
-            (env.exp:val e (qq (exp:val . ~xs)))
-            (qq '~(env.exp:val e (car xs)))))
+            (if (= 2 (count xs))
+              (env.exp:val e (qq (exp:val . ~xs)))
+              (qq '~(env.exp:val e (car xs)))))
 
         :links {exp env.exp}
 
         )
 
-   #_ (p/error "stop")
+    #_(p/error "stop")
 
     #_(!! (qq fn))
 
@@ -4166,19 +4000,19 @@
           ["depth first walk"
            (f
              [x f]
-             (walk x #(rec % f) f))]
+             (walk x #(dfwalk % f) f))]
 
           bfwalk
           ["breadth first walk"
            (f
              [x f]
-             (walk (f x) #(rec % f) id))]
+             (walk (f x) #(bfwalk % f) id))]
 
           walk?
           (f
             [x node? f]
             (cs [nxt (node? x)]
-                ($ nxt #(rec % node? f))
+                ($ nxt #(walk? % node? f))
                 (f x))))
 
         (_ :tries
@@ -4274,7 +4108,7 @@
              ([x f xs]
               (c/reduce (§ f) x xs))
              ([x f y & ys]
-              (rec x (* f)
+              (red x (* f)
                    (* zip vec y ys))
               #_(if (c/every? cons? xs)
                   (* red
@@ -4309,7 +4143,7 @@
              [x size step]
              (let [[pre post] (splat x size)]
                   (if (cons? post)
-                    (cons pre (rec (drop x step) size step))
+                    (cons pre (scan (drop x step) size step))
                     (if (cons? pre)
                       (sip (pure x) pre)
                       (pure x)))))]
@@ -5319,40 +5153,40 @@
 
 #_(when @compiled
 
-  #?(:clj  (load-file "aspout.clj")
-     :cljs (load-file "aspout.cljs")))
+    #?(:clj  (load-file "aspout.clj")
+       :cljs (load-file "aspout.cljs")))
 
 #_(when-not @compiled
 
-  (defn targetted-declarations [target]
-    (keep (fn [d] (if (map? d) (d target) d)) @declarations))
+    (defn targetted-declarations [target]
+      (keep (fn [d] (if (map? d) (d target) d)) @declarations))
 
-  (defn write-exprs! [filename exprs]
-    (spit filename (apply str (interpose "\n" (mapv #(with-out-str (p/pp %)) exprs)))))
+    (defn write-exprs! [filename exprs]
+      (spit filename (apply str (interpose "\n" (mapv #(with-out-str (p/pp %)) exprs)))))
 
-  (write-exprs! "aspout.clj" (targetted-declarations :clj))
+    (write-exprs! "aspout.clj" (targetted-declarations :clj))
 
-  (write-exprs! "aspout.cljs" (targetted-declarations :cljs)
-                #_(keep (fn [e]
-                          (if (seq? e)
-                            (cond
+    (write-exprs! "aspout.cljs" (targetted-declarations :cljs)
+                  #_(keep (fn [e]
+                            (if (seq? e)
+                              (cond
 
-                              (= 'clojure.core/alter-var-root (first e))
-                              (list 'set! (second (second e))
-                                    (list* (nth e 2) (second (second e)) (drop 3 e)))
+                                (= 'clojure.core/alter-var-root (first e))
+                                (list 'set! (second (second e))
+                                      (list* (nth e 2) (second (second e)) (drop 3 e)))
 
-                              (= 'clojure.core/declare (first e))
-                              (cons 'declare (next e))
+                                (= 'clojure.core/declare (first e))
+                                (cons 'declare (next e))
 
-                              (or (= 'clojure.core/swap! (first e))
-                                  (= 'clojure.core/defmacro (first e)))
-                              nil
+                                (or (= 'clojure.core/swap! (first e))
+                                    (= 'clojure.core/defmacro (first e)))
+                                nil
 
-                              :else e)
-                            e))
-                        (targetted-declarations :cljs)))
+                                :else e)
+                              e))
+                          (targetted-declarations :cljs)))
 
-  (reset! compiled true))
+    (reset! compiled true))
 
 (comment
 
