@@ -41,8 +41,7 @@
   (if (cljs?) :cljs :clj))
 
 (defmacro expanding [& body]
-  `(binding [*expansion-state*
-             {:env ~'&env :form ~'&form}]
+  `(binding [*expansion-state* {:env ~'&env :form ~'&form}]
      ~@body))
 
 (defmacro targeting-cljs [& xs]
