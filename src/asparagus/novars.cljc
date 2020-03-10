@@ -1,6 +1,6 @@
 (ns asparagus.novars
   (:refer-clojure
-    :exclude [eval assert resolve let case])
+    :exclude [eval assert resolve #_let case])
   (:require
     [clojure.core :as c]
     [clojure.string :as str]
@@ -32,17 +32,18 @@
              [asparagus.novars :refer
               [env! fne defne defexpansion e+ #_E+ #_E- !! ppenv updxp ppdoc init-top-forms
                ;; asparagus defined top forms
-               check is isnt
-               let lut ?let !let !lut
-               ?f !f f fu !fu
-               f1 !f1 ?f1 !fu1 fu1
-               f_ !f_ ?f_ !fu_ fu_
-               cf ?cf !cf cfu !cfu
-               clet clut !clet !clut
-               case casu !case !casu
-               throws
-               exp
-               sq qq qq!]])))
+               ;check is isnt
+               ;let lut ?let !let !lut
+               ;?f !f f fu !fu
+               ;f1 !f1 ?f1 !fu1 fu1
+               ;f_ !f_ ?f_ !fu_ fu_
+               ;cf ?cf !cf cfu !cfu
+               ;clet clut !clet !clut
+               ;case casu !case !casu
+               ;throws
+               ;exp
+               ;sq qq qq!
+               ]])))
 
 ;; there is some uncommon code practice in this file that may surprise the reader
 ;; I'm heavily using 'do blocks to group related peaces of functionality, which i usually start with a descriptive keyword
@@ -68,7 +69,7 @@
 ;; clean emitted vars
 ;; reset generics registry
 (do
-  #_(println "
+  (println "
  ▄▄▄· .▄▄ ·  ▄▄▄· ▄▄▄· ▄▄▄   ▄▄▄·  ▄▄ • ▄• ▄▌.▄▄ ·
 ▐█ ▀█ ▐█ ▀. ▐█ ▄█▐█ ▀█ ▀▄ █·▐█ ▀█ ▐█ ▀ ▪█▪██▌▐█ ▀.
 ▄█▀▀█ ▄▀▀▀█▄ ██▀·▄█▀▀█ ▐▀▀▄ ▄█▀▀█ ▄█ ▀█▄█▌▐█▌▄▀▀▀█▄
@@ -77,7 +78,8 @@
 
   #?(:clj (do (when-let [reset (c/resolve 'rEset!)] (reset))
               (g/reset-registry!)
-              (p/import-macros let c/let))))
+              #_(p/import-macros let c/let)
+              )))
 
 #_(defmacro let [& xs] `(c/let ~@xs))
 
@@ -126,8 +128,8 @@
 
         (defn path->str
           [p]
-          (str (cs [l (.rel p)] (str* (repeat (inc l) '.)))
-               (clojure.string/join "." (.xs p))
+          (str (cs [l (:rel p)] (str* (repeat (inc l) '.)))
+               (clojure.string/join "." (:xs p))
                (cs [mk (:mkey p)] (str ":" (name mk)))))
 
         (defn path->sym
@@ -265,10 +267,10 @@
 
         (defn rpath?
           "is x a relative path ?"
-          [x] (cs (path? x) (.rel x)))
+          [x] (cs (path? x) (:rel x)))
         (defn apath?
           "is x an absolute path ?"
-          [x] (cs (path? x) (not (.rel x))))
+          [x] (cs (path? x) (not (:rel x))))
         (defn mpath?
           "is x a meta path ? (leaf path, a path that has an mkey)"
           [x] (cs (path? x) (:mkey x)))
@@ -279,17 +281,17 @@
           "is x a dotpath ? (a relative path with empty xs and no mkey)"
           [x] (cs (rpath? x)
                   (and (not (mpath? x))
-                       (empty? (.xs x)))))
+                       (empty? (:xs x)))))
         (defn pure-mpath? [p]
           (and (mpath? p)
                (not (rpath? p))
-               (not (seq (.xs p)))))
+               (not (seq (:xs p)))))
         )
 
     (do :misc
 
         (defn path-segments [p]
-          (catv (.xs p)
+          (catv (:xs p)
                 (cs [mk (:mkey p)] [mk])))
 
         (defn path-head [p]
@@ -299,7 +301,7 @@
 
         (defn path-prefix [p]
           (cs (apath? p)
-              (car (.xs p))))
+              (car (:xs p))))
 
         (defn path-unprefix [p]
           (cs (apath? p)
@@ -308,7 +310,7 @@
         (defn bubbling-path
           [p]
           #_(pp 'bubling-path p)
-          (cs [xs (seq (.xs p))]
+          (cs [xs (seq (:xs p))]
               (assoc p :xs (-> xs butlast vec))))
 
         (defn bubbling-paths
@@ -438,7 +440,7 @@
         ;; inspection and resolution
 
         (defne loc
-               [e] (.at e))
+               [e] (:at e))
 
         (defne root?
                [e] (= root-path (apath (loc e))))
@@ -476,10 +478,10 @@
                "if the given path's prefix is linked "
                [e p]
                (cs [? (apath? p) ;; only absolute paths can be linked
-                    ;;xs (.xs p)
+                    ;;xs (:xs p)
                     ;;pref (car xs)
                     ;;_xs (rest xs)
-                    [prefix & _xs] (.xs p)
+                    [prefix & _xs] (:xs p)
                     ;; we check if a link exists for this prefix
                     target (get (env-get e (path (loc e) :links)) prefix)]
                    ;; if yes we replace the prefix by it
@@ -507,7 +509,7 @@
                  #_(env-absfind e (path-unprefix p))
 
                  ;; p is relative
-                 [plvl (.rel p)
+                 [plvl (:rel p)
                   loc' (nth-parent-path (ppath (loc e)) plvl)]
                  (env-find (cd e loc') (apath p))
 
@@ -626,7 +628,27 @@
     ;; this atom will be populated by main asparagus macros
     (def top-forms (atom #{}))
 
-    (do :vars
+    (do :declarations
+
+        (def declarations (atom []))
+
+        (defn clj-target? [target] (or (not target) (= :clj target)))
+        (defn cljs-target? [target] (or (not target) (= :cljs target)))
+
+        (defn add-declaration! [x & [target]]
+          (swap! declarations
+                 conj
+                 (condp = target
+                   :cljs {:cljs x}
+                   :clj {:clj x}
+                   x)))
+
+        #_(defn registered-evaluation! [x & [target]]
+          (add-declaration! x target)
+          (when (clj-target? target)
+            (c/eval x))))
+
+    #_(do :vars
         (def PATHVAR_PREFIX 'ENV_)
 
         (def PATHVAR_PATTERN
@@ -638,9 +660,49 @@
 
         (defn path->varsym [p]
           (sym PATHVAR_PREFIX
-               (str/join "_" (.xs p))
+               (str/join "_" (:xs p))
                '__ (or (:mkey p) 'val))))
 
+    (do :vars
+
+        ;; the varmode business
+
+        (def PATHVAR_PREFIX 'ENV_)
+
+        (def PATHVAR_PATTERN
+          (re-pattern (str ".*" (name PATHVAR_PREFIX) ".*")))
+
+        (defn pathvar-sym? [x]
+          (re-matches PATHVAR_PATTERN
+                      (name x)))
+
+        (defn path->varsym [p]
+          (sym PATHVAR_PREFIX
+               (str/join "_" (:xs p))
+               '__ (or (:mkey p) 'val)))
+
+        (defn init-pathvar! [p & [target]]
+          (let [expr `(declare ~(path->varsym p))]
+               (add-declaration! expr target)
+               expr))
+
+        (defn set-pathvar! [p v & [target]]
+          (let [expr `(def ~(path->varsym p) ~v)]
+               (add-declaration! expr target)
+               expr))
+
+        (defn deep-merge-pathvar! [p v & [target]]
+          #_(p/pp '----- (path->varsym p) v)
+          (let [clj-expr
+                (when (clj-target? target)
+                  `(alter-var-root (var ~(path->varsym p)) deep-merge ~v))
+                cljs-expr
+                (when (cljs-target? target)
+                  `(set! ~(path->varsym p) (deep-merge ~(path->varsym p) ~v)))]
+               (add-declaration! {:clj clj-expr :cljs cljs-expr})
+               clj-expr)))
+
+    
     #?(:clj
        (do :clean
 
@@ -838,18 +900,6 @@
                    (c/eval (res e x))))
 
     )
-
-(comment
-  (time (dotimes [_ 1000]
-          (qualify @E '(fn [x & xs] (apply + x xs)))))
-
-
-
-  (time (dotimes [_ 1000]
-          (qualsym @E 'unknown)))
-
-  (time (dotimes [_ 1000]
-          ($ (vec (range 10)) inc))))
 
 (do :extension
 
@@ -1061,33 +1111,42 @@
            (def expansions (atom []))
            #_(do @expansions)
 
+           (defmacro swap-env! [& xs]
+             (let [expr `(swap! E ~@xs)]
+                  ;(add-declaration! {:clj expr})
+                  expr))
+
            (do :e+
 
                (defn env-upd_expand1 [[verb at x target]]
                  (try
-                   #_(println [verb at])
+                   (println [verb at target])
                    (condp = verb
 
                      :raw-fx x
-                     :fx (res (mv @E at) x)
+
+                     :fx
+                     (do (add-declaration!
+                           {:cljs (when (cljs-target? target) (state/targeting-cljs (res (mv @E at) x)))
+                            :clj (when (clj-target? target) (res (mv @E at) x))})
+                         (res (mv @E at) x))
 
                      :link
-                     `(swap! E env-add-member (path '~at :links) '~x)
+                     `(swap-env! env-add-member (path '~at :links) '~x)
 
                      :declare
-                     `(do (swap! E env-declare-member (path '~at))
-                          ~(when @varmode `(declare ~(path->varsym at))))
+                     `(do (swap-env! env-declare-member (path '~at))
+                          ~(when @varmode (init-pathvar! at target)))
 
                      :def
                      (c/let [source (res (mv @E at) x)
                              at (path (loc @E) at)
                              s1 (gensym)]
-                       `(c/let [~s1 ~source]
-                          (swap! E env-add-member (path '~at) ~s1)
+                       #_(add-declaration! target)
+                       `(do ;c/let [~s1 ~source]
+                          (swap-env! env-add-member (path '~at) ~source)
                           ~(when @varmode
-                             (if (state/cljs?)
-                               `(set! ~(path->varsym at) (deep-merge ~(path->varsym at) ~s1))
-                               `(alter-var-root (var ~(path->varsym at)) deep-merge ~s1))))))
+                             (deep-merge-pathvar! at source target)))))
 
                    (catch #?(:clj Exception :cljs js/Error) err
                      (error "\nenv-upd error compiling:\n"
@@ -1178,7 +1237,9 @@
 
   (!! c))
 
-(do :asparagus
+(load-file "src/asparagus/gus.clj")
+
+#_(do :asparagus
 
     #?(:clj (rEset!))
 
@@ -2201,22 +2262,22 @@
             :upd
             (fn [e body]
               (let [gsym (generic.symbol (loc e))]
-                   (assoc (generic.module gsym)
-                     :fx (qq (do #_(pp 'gen-init '~(loc e))
-                               (generic.init ~gsym ~body)
-                               #_(pp 'gen-init-end))))))
+                (assoc (generic.module gsym)
+                  :fx (qq (do #_(pp 'gen-init '~(loc e))
+                            (generic.init ~gsym ~body)
+                            #_(pp 'gen-init-end))))))
 
             reduced:upd
             (fn [e [argv & decls]]
               (let [[arg1 varg] (p/gensyms)]
-                   (qq (generic
-                         ([~arg1] ~arg1)
-                         (~argv . ~decls)
-                         (~(conj argv '& varg)
-                           . ~(c/mapcat
-                                (fn [[t i]]
-                                  [t (qq (reduce (fn ~argv ~i) ~i ~varg))])
-                                (c/partition 2 decls)))))))
+                (qq (generic
+                      ([~arg1] ~arg1)
+                      (~argv . ~decls)
+                      (~(conj argv '& varg)
+                        . ~(c/mapcat
+                             (fn [[t i]]
+                               [t (qq (reduce (fn ~argv ~i) ~i ~varg))])
+                             (c/partition 2 decls)))))))
 
             lambda-wrapper (qq fn)
 
@@ -2266,9 +2327,9 @@
              (fn [e [type & body]]
                ($ (c/vec body)
                   (fn [[n & xs]]
-                    #_(pp :gentyp+ xs (g/impl-body->cases type xs))
+                    #_(pp :gentyp+ xs (g/implement_impl-body->cases type xs))
                     (lst* (p/sym n ".extend")
-                          (g/impl-body->cases type xs)))))}
+                          (g/implement_impl-body->cases type xs)))))}
 
             :demo
             (__
@@ -5169,7 +5230,7 @@
 
     #_(pp 'will-declare-topforms)
 
-    (init-top-forms
+    #_(init-top-forms
       let lut ?let !let !lut
       ?f !f f fu !fu
       f1 !f1 ?f1 !fu1 fu1
@@ -5193,37 +5254,7 @@
         #?(:clj  (load-file "aspout.clj")
            :cljs (load-file "aspout.cljs")))
 
-    #_(when-not @compiled
 
-        (defn targetted-declarations [target]
-          (keep (fn [d] (if (map? d) (d target) d)) @declarations))
-
-        (defn write-exprs! [filename exprs]
-          (spit filename (apply str (interpose "\n" (mapv #(with-out-str (p/pp %)) exprs)))))
-
-        (write-exprs! "aspout.clj" (targetted-declarations :clj))
-
-        (write-exprs! "aspout.cljs" (targetted-declarations :cljs)
-                      #_(keep (fn [e]
-                                (if (seq? e)
-                                  (cond
-
-                                    (= 'clojure.core/alter-var-root (first e))
-                                    (list 'set! (second (second e))
-                                          (list* (nth e 2) (second (second e)) (drop 3 e)))
-
-                                    (= 'clojure.core/declare (first e))
-                                    (cons 'declare (next e))
-
-                                    (or (= 'clojure.core/swap! (first e))
-                                        (= 'clojure.core/defmacro (first e)))
-                                    nil
-
-                                    :else e)
-                                  e))
-                              (targetted-declarations :cljs)))
-
-        (reset! compiled true))
 
     (comment
 
@@ -5257,4 +5288,24 @@
                        (re-compilable-members))
                      (conj ret (meta ms))
                      ms))))))
+#_
+#?(:clj (load-file "aspout.clj"))
+#_
+(do
+
+  (pp 'compiling...)
+
+  (defn targetted-declarations [target]
+    (keep (fn [d] (if (map? d) (d target) d)) @declarations))
+
+  (defn write-exprs! [filename exprs]
+    (spit filename (apply str (interpose "\n" (mapv #(with-out-str (p/pp %)) exprs)))))
+
+  (write-exprs! "aspout.clj" (targetted-declarations :clj))
+
+  (write-exprs! "aspout.cljs" (targetted-declarations :cljs))
+
+  (pp 'done!)
+
+  #_(reset! compiled true))
 

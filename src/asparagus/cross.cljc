@@ -2277,9 +2277,9 @@
           (fn [e [type & body]]
             ($ (c/vec body)
                (fn [[n & xs]]
-                 #_(pp :gentyp+ xs (g/impl-body->cases type xs))
+                 #_(pp :gentyp+ xs (g/implement_impl-body->cases type xs))
                  (lst* (p/sym n ".extend")
-                       (g/impl-body->cases type xs)))))}
+                       (g/implement_impl-body->cases type xs)))))}
 
          :demo
          (__

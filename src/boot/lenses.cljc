@@ -1,49 +1,94 @@
 (ns boot.lenses
   (:refer-clojure :exclude [< get =])
-  (:require #?(:clj [clojure.core :as c] :cljs [cljs.core :as c])
+  (:require [clojure.core :as core]
+            [boot.control :as c]
+            [boot.generics :as g]
             [boot.prelude :as u
-             #?(:clj :refer :cljs :refer-macros) [is isnt f1 f_ defn+ marked-fn]]))
+             #?(:clj :refer :cljs :refer-macros)
+             [is isnt f1 f_ defn+ marked-fn]]))
 
-;; Lens
-;; -----------------------------------------------------------
+(declare checker lens builtins id)
 
-(declare lens builtins id)
+(defprotocol IntoChecker
+  (->checker [x]))
 
-(defrecord Lens [get upd])
+(defprotocol ICheck
+  (-check [_ x]))
 
-(defprotocol ILens (->lens [x]))
+(defn checker? [x]
+  (cond (satisfies? ICheck x) (partial -check x)
+        (satisfies? IntoChecker x) (->checker x)))
+
+(defprotocol IntoLens
+  (->lens [x]))
+
+(defprotocol ILens
+  (-get [_ x])
+  (-upd [_ x f]))
 
 (defn lens? [x]
-  (cond (instance? Lens x) x
-        (satisfies? ILens x) (->lens x)))
+  (cond (satisfies? ILens x) x
+        (satisfies? IntoLens x) (->lens x)))
 
-(marked-fn lfn
-           "'lfn works exactly like fn but
-            return a function that is marked with metadata
-            an lfn can be recognized via the lfn? predicate
-            lfn(s) behaves differently that regular lambdas when used as a lens
-            the value that it returns is persisted during navigation
-            it can be used as/in a lens that performs coercion (see exemples)
-            it also has a special behavior on arity 1,
-            that can be used to turn a regular function to a 'lfn")
+;; checkers
+;; -----------------------------------------------------------
 
-;; treating all fns as lfns could have been considered
-;; introducing a function to wrap predicates into guards
-;; the following form (valid in the current version)
-;; (mut {:a 1} [:a number? pos? (lfn inc)] identity)
-;; could have been replaced by one of those two forms
-;; (mut {:a 1} [:a (guard number?) (guard pos?) inc] identity)
-;; (mut {:a 1} [:a (guards number? pos?) inc] identity)
+(g/generic into-checker
+           [x]
+
+           :nil
+           (constantly true)
+
+           #{:num :key}
+           (fn [y] (contains? y x))
+
+           :vec
+           (checker (lens x))
+
+           :map
+           (let [cs (mapv vector
+                          (map lens (keys x))
+                          (map checker (vals x)))]
+             (fn [y]
+               (loop [cs (seq cs)]
+                 (if-not cs
+                   true
+                   (let [[lens check] (first cs)
+                         v (get y lens)]
+                     (and (c/success? v) (check v)
+                          (recur (next cs))))))))
+
+           :fun
+           (fn [y] (boolean (x y)))
+
+           :any
+           (partial core/= x))
+
+(defn lens->checker [x]
+  (when-let [l (lens? x)]
+    (fn [y] (boolean (-get l y)))))
+
+(defn checker [x]
+  (if (fn? x)
+    (comp boolean x)
+    (or (checker? x)
+        (lens->checker x)
+        (into-checker x))))
+
+(defn+ check
+  ([x] true)
+  ([x c] ((checker c) x))
+  ([x c & cs] (when (check x c) (check* x cs))))
 
 ;; operations
 ;; -----------------------------------------------------------
 
 (defn+ get [x l]
-       ((:get (lens l)) x))
+       (-get (lens l) x))
 
 (defn+ mut
        ([x l f]
-        ((:upd (lens l)) x f))
+        (-upd (lens l) x f))
        ([x l f & lfs]
         (reduce mut*
                 (mut x l f)
@@ -55,11 +100,15 @@
         executing the first transformation which associated lens does not focuses on nil"
        ([x couples]
         (when (seq couples)
-          (or (and (get x (ffirst couples))
-                   (mut* x (first couples)))
-              (mut< x (next couples)))))
+          (c/or
+            (c/and
+              (get x (ffirst couples))
+              (mut* x (first couples)))
+            (mut< x (next couples)))))
        ([x l f & lfs]
         (mut< x (cons [l f] (partition 2 lfs)))))
+
+(c/and 1 3)
 
 (defn+ put
        ([x l v]
@@ -75,24 +124,60 @@
         can be used to do validation and coercion (with the help of 'lfn)"
        [x & xs]
        (if (seq xs)
-         (when-let [x' (mut x (first xs) identity)]
-           (pass* x' (next xs)))
+         (c/let? [x' (mut x (first xs) identity)]
+                 (pass* x' (next xs)))
          x))
 
 ;; creation
 ;; -----------------------------------------------------------
 
+
+
 (defn lens+
   "lens composition, don't use directly
    prefer passing a vector to the 'lens function"
   [l m]
-  (Lens. (fn [x] (some-> x (get l) (get m)))
-         (fn [x f]
-           ;; the idea here is to shortcircuit when encountering an intermediate nil result
-           (when-let [v1 (get x l)]
-             (when-let [v2 (mut v1 m f)]
-               (put x l v2)))
-           #_(put x l (mut (get x l) m f)))))
+  (lens (fn [x]
+          (c/let? [lx (get x l)
+                   lm (get lx m)] lm))
+        (fn [x f]
+          ;; the idea here is to shortcircuit when encountering an intermediate nil result
+          (c/let? [v1 (get x l)
+                   v2 (mut v1 m f)]
+                  (put x l v2))
+          #_(put x l (mut (get x l) m f)))))
+
+(g/generic into-lens
+           [x]
+
+           :nil
+           (lens identity
+                 (fn [x f] (f x)))
+
+           #{:num :key}
+           (lens (fn [y] (core/get y x c/failure))
+                 (fn [y f] (c/? (contains? y x)
+                                (core/update y x f))))
+           :vec
+           (reduce lens+ (map lens x))
+
+           :fun
+           (lens (fn [y] (x y))
+                 (fn [y f] (c/let? [y' (x y)] (f y'))))
+
+           :map
+           (let [m (zipmap (keys x) (map lens (vals x)))
+                 getter
+                 #(reduce (fn [a e]
+                            (let [k (key e)
+                                  v (get % (val e))]
+                              (if v (assoc a k v) (reduced nil))))
+                          {} m)]
+             (lens getter
+                   (fn [y f] (f (getter y)))))
+
+           :any
+           (lens (partial (c/core-guards core/=) x)))
 
 (defn lens
   "arity 1:
@@ -102,51 +187,29 @@
     (getter) and a function that takes the state and and update
     function (setter), constructs a lens."
   ([x]
-   #_(println "lens " x)
    (or (lens? x)
        (builtins x)
-       (cond
-
-         ;; nil is the identity lens
-         (nil? x)
-         (lens identity
-               (fn [x f] (f x)))
-
-         ;; index or key lens
-         ;; TODO handle negative indexes
-         (or (keyword? x) (integer? x))
-         (lens (fn [y] (c/get y x))
-               (fn [y f] (when (contains? y x)
-                           (c/update y x f))))
-
-         ;; lens composition
-         (vector? x)
-         (reduce lens+ (map lens x))
-
-         ;; lfn perform a transformation while navigating
-         (lfn? x)
-         (lens (fn [y] (x y))
-               (fn [y f] (when-let [y' (x y)] (f y'))))
-
-         ;; functions are turned into a guard-lens
-         (fn? x)
-         (lens (fn [y] (when (x y) y))
-               (fn [y f] (when (x y) (f y))))
-
-         ;; values acts as = guards
-         :else
-         (lens (partial c/= x)))))
+       (into-lens x)))
 
   ([get upd]
-   (Lens. get upd)))
+   (reify ILens
+     (-get [_ x] (get x))
+     (-upd [_ x f] (upd x f)))))
 
 ;; instances and constructors
 ;; -----------------------------------------------------------
 
-(def builtins
+(def core-predicates-lenses
+  (u/$vals c/core-guards lens))
+
+(def extra-lenses
   {:*
-   (lens (fn [x] (when (map? x) (vals x)))
-         (fn [x f] (u/$vals f x)))})
+   (lens (fn [x] (c/? (map? x) (vals x)))
+         (fn [x f] (u/$vals x f)))})
+
+(def builtins
+  (merge core-predicates-lenses
+         extra-lenses))
 
 (def k
   "Constant lens"
@@ -169,19 +232,21 @@
   "fork lens, tries every given lens(able) in order
    use the first that does not focuses on nil"
   [& xs]
-  (let [lenses (map lens xs)]
+  (let [lenses (seq (map lens xs))]
     (lens
       (fn [x]
-        (loop [xs lenses]
-          (when (seq xs)
-            (or (get x (first xs))
-                (recur (next xs))))))
+        (loop [ls lenses]
+          (if-not ls
+            c/failure
+            (c/let? [ret (get x (first ls))]
+                    ret (recur (next ls))))))
       (fn [x f]
-        (loop [xs lenses]
-          (when (seq xs)
-            (if (get x (first xs))
-              (mut x (first xs) f)
-              (recur (next xs)))))))))
+        (loop [ls lenses]
+          (if-not ls
+            c/failure
+            (c/? (get x (first ls))
+                 (mut x (first ls) f)
+                 (recur (next ls)))))))))
 
 (defn path
   "a lens representing deep access/update in a map (with keyword keys)
@@ -191,8 +256,8 @@
   (let [ks (flatten xs)]
     (assert (every? keyword? ks)
             "path should only contains keywords")
-    (Lens. (fn [x] (c/get-in x ks))
-           (fn [x f] (c/update-in x ks f)))))
+    (lens (fn [x] (core/get-in x ks c/failure))
+          (fn [x f] (core/update-in x ks f)))))
 
 (defn ?
   "build a lens that when focuses on nil, returns the state unchanged, or behave normally"
@@ -212,13 +277,164 @@
           (other->one (f (one->other s))))))
 
 (defn = [x]
-  (lens (fn [y] (when (c/= x y) y))
-        (fn [y f] (when (c/= x y) (f y)))))
+  (lens (fn [y] (if (core/= x y) y c/failure))
+        (fn [y f] (if (core/= x y) (f y) c/failure))))
 
 ;; assertions
 ;; -----------------------------------------------------------
 
+#_(println c/core-guards)
 
+(do
+
+  (do :check-tests
+
+    (is true (check 1 pos?))
+    (is true (check [0 1 2] 2))
+    (is false (check [0 1 2] 3))
+    (is true
+        (check {:a 1} [:a pos?]))
+    (is true
+        (check {:a 1 :b {:c -1 :d 0}}
+               [:a pos?]
+               [:b :c neg?]))
+    (is true
+        (check {:a 1 :b {:c -1 :d 0}}
+               {:a pos?
+                :b {:c neg? :d [number? zero?]}
+                }))
+
+    (is false
+        (check {:a 1 :b {:c -1 :d 0}}
+               {:a pos?
+                :b {:c neg? :d string?}
+                })))
+
+  (do :keyword-lenses
+      (is 1 (get {:a 1} :a))
+      (is (c/failure? (get {:a 1} :b)))
+      (is {:a 2} (mut {:a 1} :a inc))
+      (is {:a 1 :b 1} (mut {:a 0 :b 2} :a inc :b dec)))
+
+  (do :indexes-leses
+      (is 2 (get [1 2 3] 1))
+      (is [1 3 3] (mut [1 2 3] 1 inc))
+      (is [2 2 2] (mut [1 2 3] 0 inc 2 dec))
+      (is [1 2 [4 4]]
+          (mut [1 2 [3 4]] [2 0] inc)))
+
+  (do :composition
+      ;; vector denotes composition (left to right)
+      (is 1 (get {:a {:b 1}} [:a :b]))
+      (is 3 (get {:a {:b [1 2 3]}} [:a :b 2]))
+      (is {:a {:b 2}} (mut {:a {:b 1}} [:a :b] inc))
+      (is {:a {:b 2 :c 1}}
+          (mut {:a {:b 1 :c 2}}
+               [:a :b] inc
+               [:a :c] dec))
+
+      (is {:a 3, :c {:d 3}}
+          (mut {:a 1 :c {:d 2}}
+               :a (fn [x] (+ x x x))
+               [:c :d] inc)))
+
+
+  (do :functions
+      (is 1 (get 1 pos?))
+      (is c/failure (get 1 neg?))
+      (is {:a 0} (mut {:a 1} [:a pos?] dec))
+      (is c/failure (mut {:a 0} [:a pos?] dec)))
+
+  (do :branching
+
+      (is (zero? (mut< 1
+                       neg? inc
+                       pos? dec)))
+      (is {:a 0}
+
+          (mut< {:a 1}
+                [:a pos?] dec
+                [:a neg?] inc)
+
+          (mut< {:a -1}
+                [:a pos?] dec
+                [:a neg?] inc))
+
+      (is {:a {:b 2, :c -1}}
+          (mut {:a {:b 1 :c -1}}
+               (< [:a :c pos?] ;; branching lens
+                  [:a :b pos?])
+               inc)))
+
+  (do :option
+      (is {:a {:b 1}}
+          (mut {:a {:b 1}}
+               (? [:a :z :b]) ;; if points to something perform the transformation, else return data unchanged
+               inc))
+
+      (is {:a {:b 2}}
+          (mut {:a {:b 1}}
+               (? [:a :b])
+               inc)))
+
+  (do :non-existant-keys
+
+      (is {:a {:b {:c 42}}}
+          (mut {} (path [:a :b :c]) (constantly 42)))
+
+      (is {:a {:b {:c 42}}}
+          (put {} (path :a :b :c) 42) ;; put is a thin wrapper around 'mut, it simply wrap the transformation in a constantly call
+          (put {} (path [:a :b :c]) 42)
+          (put {} (path :a [:b :c]) 42)
+          (mut {} (path [:a :b] :c) (constantly 42)))
+
+      (is {:b 1}
+          (mut {} (path :b) (fnil inc 0))))
+
+  (do :matching-values
+      (is "io"
+          (get {:a "io"} [:a "io"]))
+
+      (is c/failure (get {:a "io"} [:a "iop"]))
+
+      ;; if you want to match an integer (else it would be interpreted as an index lens)
+      (is (core/= 2 (get [2] [0 (= 2)])))
+      )
+
+  (do :pass-tests
+      ;; the pass lens can be used as a validation mecanism
+      (is (pass
+            {:a 1 :b "io" :p 1}
+            [:a number? pos?]
+            [:b string?])
+          {:a 1
+           :b "io"
+           :p 1})
+
+      ;; coercion
+      (is (pass
+            {:a 1 :b "io" :p 1}
+            [:a number? pos? inc]
+            [:b string?])
+          {:a 2 ;; :a has been coerced
+           :b "io"
+           :p 1})
+
+      )
+
+  (do :builtins
+      ;; keys
+      (is {:a 2 :b 3}
+          (mut {:a 1 :b 2} :* inc))
+
+      (is '(1 2)
+          (get {:a 1 :b 2} :*))
+
+      ;; convertion
+      (is (/ 11 10)
+          (mut 1 (convertion #(* % 10)
+                             #(/ % 10))
+               inc))))
 
 
 

@@ -26,7 +26,8 @@
             :num 'java.lang.Number
             :str 'java.lang.String
             :sym 'clojure.lang.Symbol
-            :key 'clojure.lang.Keyword))
+            :key 'clojure.lang.Keyword
+            :link 'clojure.lang.MapEntry))
 
         (def colls
           '{:lst #{clojure.lang.ISeq}
@@ -56,7 +57,8 @@
             :num 'number
             :str 'string
             :sym 'Symbol
-            :key 'Keyword))
+            :key 'Keyword
+            :link 'MapEntry))
 
         (def cljs-colls
           '{:lst #{ArrayNodeSeq ChunkedCons ChunkedSeq

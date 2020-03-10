@@ -570,6 +570,9 @@
        (defmacro f1 [pat & body]
          `(fn [~pat] ~@body))
 
+       (defmacro fk [ks & body]
+         `(fn [{:keys ~ks}] ~@body))
+
        (defmacro f_ [& body]
          `(fn [~'_] ~@body))
 
