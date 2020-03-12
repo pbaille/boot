@@ -229,10 +229,13 @@
                   :cases (fn [cs] (mapv forked-case cs))))))
 
     (defn dispatches-declarations [spec]
+
       (->> (:cases spec)
            (map (fn [{:keys [forkname compiled name]}]
                   (if forkname
-                    `(def ~name ~forkname)
+                    (do (assert (resolve forkname)
+                                (str forkname " is not available in " (p/ns-sym)))
+                        `(def ~name ~forkname))
                     `(defn ~name ~compiled))))
            (list* 'do)))
 
