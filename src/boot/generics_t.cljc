@@ -82,6 +82,8 @@
 
 ;; fork is creating a new generic from an existing one
 ;; it inherit all impls and extend/overide it with given implementations
+
+#_(g/fork-spec 'g2 'g2+)
 (fork g2 g2+
       ([a b] :lst [:g2+seq2 a b])
       ([a b c & ds] :str [:g2+variadstr a b c ds]))

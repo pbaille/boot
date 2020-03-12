@@ -127,6 +127,14 @@
           (conj (remv any? cases) case)
           (conj (remv overiden-case? cases) case))))
 
+    (defn case-name [name type arity]
+      ;; for each case we build a uniq name that will hold this particular implementation
+      ;; a def will be emitted holding it, and we will be able to inline it in some case
+      ;; it also will simplify sharing
+      (cond (set? type) (case-name name (apply p/sym (interpose "&" (sort type))) arity)
+            (p/word? type) (p/sym (arify-name name arity) "_IMPL_" type)
+            :else (p/error "bad type " type)))
+
     )
 
 (do :parts
@@ -136,26 +144,18 @@
       [{:as spec :keys [name ns cases]}
        & [lambda-case-compiler]]
 
-      (letfn [(case-name [arity type]
-                ;; for each case we build a uniq name that will hold this particular implementation
-                ;; a def will be emitted holding it, and we will be able to inline it in some case
-                ;; it also will simplify sharing
-                (cond (set? type) (case-name arity (apply p/sym (interpose "&" (sort type))))
-                      (p/word? type) (p/sym (arify-name name arity) "_IMPL_" type)
-                      :else (p/error "bad type " type)))]
-
-        (assoc spec
-          :cases
-          (mapv (fn [{:keys [arity type argv expr] :as casemap}]
-                  (let [dispatch-name (case-name arity type)]
-                    (assoc casemap
-                      :ns ns
-                      :name dispatch-name
-                      :fullname (with-ns ns dispatch-name)
-                      :compiled
-                      ((or lambda-case-compiler identity)
-                       (list argv expr)))))
-                (mapcat casemaps cases)))))
+      (assoc spec
+        :cases
+        (mapv (fn [{:keys [arity type argv expr] :as casemap}]
+                (let [dispatch-name (case-name name type arity)]
+                  (assoc casemap
+                    :ns ns
+                    :name dispatch-name
+                    :fullname (with-ns ns dispatch-name)
+                    :compiled
+                    ((or lambda-case-compiler identity)
+                     (list argv expr)))))
+              (mapcat casemaps cases))))
 
     (defn expanded-cases [spec]
       (letfn
@@ -169,11 +169,11 @@
     (defn extension-map [spec]
       (letfn [(expand-case [c]
                 (map #(assoc c :type %) (t/classes (:type c))))
-              (conj-case [m {:keys [type arity fullname]}]
-                (assoc m type
+              (conj-case [m {:keys [type arity forkname fullname]}]
+                (assoc m [type arity]
                          (merge (-> spec :arities (get arity))
                                 {:arity arity
-                                 :impl-name fullname})))]
+                                 :impl-name (or forkname fullname)})))]
         (reduce conj-case {} (mapcat expand-case (:cases spec)))))
 
     (defn with-arity-map
@@ -214,10 +214,26 @@
 
         ))
 
+    (defn fork-spec [parent-name fork-name]
+      (let [names (derive-name fork-name)
+            parent-spec (get-spec! parent-name)
+            ns (p/ns-sym)
+            forked-case
+            (fn [{:as c :keys [forkname fullname type arity]}]
+              (-> (dissoc c :fullname)
+                  (assoc :ns ns
+                         :name (case-name fork-name type arity)
+                         :forkname (or forkname fullname))))]
+        (with-arity-map
+          (update (merge parent-spec names)
+                  :cases (fn [cs] (mapv forked-case cs))))))
+
     (defn dispatches-declarations [spec]
       (->> (:cases spec)
-           (map (fn [{:keys [compiled name]}]
-                  `(defn ~name ~compiled)))
+           (map (fn [{:keys [forkname compiled name]}]
+                  (if forkname
+                    `(def ~name ~forkname)
+                    `(defn ~name ~compiled))))
            (list* 'do)))
 
     (comment (dispatches-declarations (get-spec! 'g1)))
@@ -254,7 +270,7 @@
 
     (defn extend-forms [{:as spec :keys [ns]}]
       (mapv
-        (fn [[class {:keys [protocol-name method-name impl-name]}]]
+        (fn [[[class arity] {:keys [protocol-name method-name impl-name]}]]
           (list `c/extend class
                 (with-ns ns protocol-name)
                 {(keyword method-name) impl-name}))
@@ -262,7 +278,7 @@
 
     (defn extend-type-forms [{:as spec :keys [ns]}]
       (mapv
-        (fn [[class {:keys [arity protocol-name method-name impl-name]}]]
+        (fn [[[class arity] {:keys [protocol-name method-name impl-name]}]]
           (let [argv (p/argv-litt arity)]
             (list `extend-type class
                   (with-ns ns protocol-name)
@@ -415,15 +431,15 @@
       (extension-form
         (generic-spec name cases)))
 
+
+
     (p/defmac fork
       "create a new generic from an existing one
        does not alter the original"
       [parent-name name & cases]
-      (let [names (derive-name name)
-            parent-spec (get-spec! parent-name)
-            base-spec (merge parent-spec names)
+      (let [spec (fork-spec parent-name name)
             extension-spec (generic-spec name cases)
-            spec (extend-spec base-spec extension-spec)]
+            spec (extend-spec spec extension-spec)]
         (declaration-form spec)))
 
     (p/defmac implements?
