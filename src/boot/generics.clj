@@ -345,15 +345,14 @@
             base-spec (merge parent-spec names)
             extension-spec (compiled-generic-spec name cases)
             spec (extend-spec base-spec extension-spec)]
-        (identity ;p/pprob 'fork
-          (declaration-form spec))))
+        (declaration-form spec)))
 
     (p/defmac implements?
       "test if something implements a generic"
       [name v]
       (let [gspec (get-spec! name)
             proto-prefix (:pname gspec)
-            proto-syms (map (partial p/sym proto-prefix '_)
+            proto-syms (map (partial p/sym (:ns gspec) "/" proto-prefix '_)
                             (map str (:arities gspec)))]
         `(or ~@(mapv (fn [s] `(satisfies? ~s ~v)) proto-syms))))
 
@@ -525,3 +524,18 @@
 
 
 
+(comment :resolution-xp
+
+    (defn resolve-deep [x env]
+      (clojure.walk/prewalk
+        (fn [x] (if (symbol? x) (resolve env x) x))
+        x))
+
+    (def compiled-generic-spec [name body env]
+      (let [spec (generic-spec name body)
+            spec (update spec :cases resolve-deep)]))
+
+    (cljs.analyzer/res)
+    (clojure.walk/macroexpand-all
+      '(let [z 1 a (fn [x] (let [y x] (+ x y z)))]
+         (fn [i] (+ i (a i))))))

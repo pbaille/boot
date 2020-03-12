@@ -191,3 +191,7 @@
 (p/assert
   (= :validkey (valid' :a))
   (= :validword (valid' 'a)))
+
+(comment
+  (g/get-reg)
+  (macroexpand '()))

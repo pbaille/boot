@@ -4,24 +4,12 @@
             [boot.generics :as g]
             [boot.named :as n]
             [boot.prelude :as p :refer [is]]
-            [floor.declaration :as d])
+            [floor.declaration :as d :refer [failure]])
   #?(:cljs (:require-macros [boot.control :refer [? let? ?> ?<]])))
-
-(g/generic fail [x]) ;; anything can fail to represent an error
-
-(g/deft :failure [data] []
-        (fail [this] (:data this)))
-
-(defn failure? [x]
-  (g/implements? fail x)) ;; can also be changed
-
-#_(g/generic+ fail nil ::nil-error) ;; is line will add nil as a shortcircuiting value
 
 (def failure0 (failure ::failure))
 
-(assert (failure? failure0)
-        "failure value and failure predicate do not mach!")
-
+(defn failure? [x] (g/implements? d/fail x))
 (defn success? [x] (not (failure? x)))
 
 (comment
@@ -74,19 +62,6 @@
 
   )
 
-
-(g/generic+ d/bindings
-            [s seed]
-            :sym
-            (let [name (name s)
-                  prefix (first name)
-                  prefixed? (#{\? \!} prefix)
-                  s (if prefixed? (n/sym (next name)) s)]
-              (condp = prefix
-                \? [s `(or ~seed nil)]
-                \! [s `(or ~seed (ex-info "assertive binding error" {:failure (fail ~seed)}))]
-                [s seed])))
-
 #?(:clj
 
    (do (defmacro IF
@@ -112,7 +87,7 @@
                   [p1 e1 & bs] (d/bindings pat expr)]
               `(let ~[p1 e1]
                  (IF ~p1
-                     (? ~(vec bs) ;; TODO check primitive to avoid this let form
+                     (? ~(vec bs)
                         ~(if others
                            `(? ~(vec others) ~then ~else)
                            then))

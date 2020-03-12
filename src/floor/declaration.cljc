@@ -2,8 +2,21 @@
   (:require [boot.generics :as g]
             [boot.prelude :as u]))
 
+#?(:clj
+   (do
+     (g/generic read
+                ([x] (read x {}))
+                ([x options] x))
+     (g/generic bindings
+                ([x y] (bindings x y {}))
+                ([x y options] [x y]))))
+
 (g/generic form [x] x)
-(g/generic bindings [x y] [x y])
+
+(g/generic fail [x])
+;; TODO I want to write (deft failure [data] (fail [_] data))
+(g/deft :failure [data] []
+        (fail [this] (:data this)))
 
 (g/generic getter [x] (u/error "no getter impl for " x))
 (g/generic updater [x] (u/error "no updater impl for " x))
