@@ -1,7 +1,7 @@
 (ns boot.generics-t
   (:require [boot.prelude :as p])
   (#?(:clj :require :cljs :require-macros)
-   [boot.generics :as g :refer [generic generic+ fork]]
+   [boot.generics2 :as g :refer [generic generic+ fork]]
    [boot.types :as t :refer [isa]]))
 
 #_(+ 1 1)
@@ -29,7 +29,12 @@
           ;; if a last expresion is given it extends Object
           [:unknown x])
 
+(g/implements? g1 (atom {}))
+
 #?(:clj (do (g/get-spec! 'g1)
+            (g/expanded-cases (g/get-spec! 'g1))
+            (g/extension-map (g/get-spec! 'g1))
+            (g/dispatches-declarations (g/get-spec! 'g1))
             (g/implementers (g/get-spec! 'g1))
             (g/get-reg)))
 
@@ -118,11 +123,29 @@
 
 (g/type+ :fun
          (g1 [x] :g1fun)
-         (g2 [x y] [:g2fun2 x y]))
+         (g2 [x y] (list :g2fun2 x y)))
+
+#_(macroexpand '(boot.generics2/generic+ g2 ([x y] :fun [:g2fun2 x y])))
+#_(clojure.core/extend clojure.lang.Fn
+  boot.generics-t/Ig2_2
+  {:p_g2_2 (clojure.core/fn ([x y] [:g2fun2 x y]))})
+#_(g/get-spec! 'g2)
 
 (p/assert
   (= [:g2fun2 inc 1] (g2 inc 1))
   (= :g1fun (g1 (fn [a]))))
+
+(defprotocol P1 (p1 [x]))
+
+(extend Object P1 {:p1 (fn [x] :obj)}
+  )
+
+(p1 1)
+
+(extend clojure.lang.Fn P1 {:p1 (fn [x] :fn)}
+  )
+
+(p1 (fn [x] x))
 
 ;; the implementations given to type+ does not have to be asparagus generics,
 ;; it can be regular clojure protocols functions

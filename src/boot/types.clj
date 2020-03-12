@@ -159,13 +159,15 @@
 
     (regfn childs
            "children seq"
-           [x k]
-           (loop [ret [] ps (all-paths x [[k]])]
-             (if-let [ps (seq (filter seq ps))]
-               (let [new (set/difference (set (map first ps)) (set ret))]
-                 (recur (concat ret new)
-                        (map rest ps)))
-               (vec (rest ret)))))
+           [reg k]
+           (if (set? k)
+             (mapcat (partial childs reg) k)
+             (loop [ret [] ps (all-paths reg [[k]])]
+               (if-let [ps (seq (filter seq ps))]
+                 (let [new (set/difference (set (map first ps)) (set ret))]
+                   (recur (concat ret new)
+                          (map rest ps)))
+                 (vec (rest ret))))))
 
     (regfn parents
            "parents seq"
@@ -175,23 +177,21 @@
 
     (regfn childof
            "is x a child of y?"
-           [x y] ((set (childs y)) x))
+           [x y]
+           (and (cond (= :any y) true
+                      (= :any x) false
+                      :else (set/subset? (set (childs x)) (set (childs y))))
+                x)
+           #_((set (childs y)) x))
 
     (regfn parentof
            "is x a parent of y?"
-           [x y] ((set (parents y)) x))
-
-    (regfn >=
-           "same or parentof"
            [x y]
-           (or (parentof x y)
-               (and (= x y) x)))
-
-    (regfn <=
-           "same or childof"
-           [x y]
-           (or (childof x y)
-               (and (= x y) x)))
+           (and (cond (= :any x) true
+                      (= :any y) false
+                      :else (set/subset? (set (childs y)) (set (childs x))))
+                x)
+           #_((set (parents y)) x))
 
     (regfn classes
 
@@ -243,6 +243,20 @@
     (p/assert
       (parents :vec)
       (childs :coll))
+
+    (childof :coll :vec)
+    (childof :vec :coll)
+
+    (childs #{:word :coll})
+    (childof :sym #{:word :coll})
+    (childof #{:sym :str} #{:word :coll})
+    (parentof #{:sym :str} #{:word :coll})
+    (parentof #{:word :coll} #{:sym :str})
+    (parentof :vec :vec)
+    (childof :vec :vec)
+    (childof :vec :any)
+    (parentof :vec :any)
+    (childs :any)
     )
 
 (do :preds
