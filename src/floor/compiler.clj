@@ -1,6 +1,5 @@
 (ns floor.compiler
   (:require [boot.prelude :as p]
-            [boot.generics :as g]
             [floor.composite :as compo]))
 
 (p/use!)
@@ -29,14 +28,16 @@
       (assoc-in e [ns name] mobject0))))
 
 (defn env-get [e sym]
-  (when (symbol? sym)
-    (cs
-      [{:keys [ns name]} (parse-symbol sym)
-       found (get-in e [ns name])]
-      (merge mobject0 found)
-
-      (or (some-> sym resolve meta mobject)
-          mobject0))))
+  (cs
+    [{:keys [ns name]} (parse-symbol sym)
+     found (get-in e [ns name])]
+    (merge mobject0 found)
+    ;; is symbol try to find metas
+    (or (and (symbol? sym)
+             (some-> sym resolve meta mobject))
+        ;; else return the identity mobj
+        mobject0)
+    ))
 
 (defn expand-seq
   [env form]

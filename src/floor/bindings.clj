@@ -25,10 +25,10 @@
             (p/catv
               (when-not symseed? [vect seed])
               (d/bindings ¡linecheck `(line? ~vect) options)
-              [_head `(take ~cnt ~vect)
-               (d/bindings ¡size>= `(= (count ~_head) ~cnt) options)
-               _tail `(drop ~cnt ~vect)
-               (d/bindings ¡size= `(not (seq ~_tail)) options)]
+              [_head `(take ~cnt ~vect)]
+              (d/bindings ¡size>= `(= (count ~_head) ~cnt) options)
+              [_tail `(drop ~cnt ~vect)]
+              (d/bindings ¡size= `(not (seq ~_tail)) options)
               (mapcat
                 (fn [e i] (d/bindings e `(nth ~_head ~i (d/failure {:index-not-found ~i})) options))
                 (seq v) (range)))))))
