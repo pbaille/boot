@@ -67,11 +67,12 @@
       (macroexpand (QMARK-expand
                      {}
                      '([[a b c] failure0] a
-                       [[a b c] (failure 2)] b)))
+                       [[a b c] (failure 2)] b
+                       pouet)))
 
       (QMARK-expand
         {}
-        '([[a b c] pouet] :iop))
+        '([[a b c] pouet] :iop :nop))
 
       (d/bindings '[a b c] 'xs)
       )
@@ -98,43 +99,33 @@
      (defn IF-expand [env args]
        (apply IF-form (map (partial cpl/expand env) args)))
 
-     (def recnt (atom 0))
-
      (defn QMARK-expand
-       [env [b1 e1 b2 e2 & xs :as args]]
-       #_(println "qmark exp " args (count args))
+       [env [b1 e1 :as args]]
        (let [exp (partial cpl/expand env)]
          (condp = (count args)
-           0 (do  nil)
-           1 (do  (exp b1))
-           2 (do  (QMARK-expand env [b1 e1 nil]))
-           3 (do
-                 (cond
-                   (not (vector? b1)) (IF-expand env [b1 e1 b2])
-                   (not (seq b1)) (exp e1)
-                   :else
-                   (let [[pat expr & others] b1
-                         [p1 e1' & bs] (d/bindings pat (exp expr))]
-                     `(let ~[p1 e1']
-                        ~(let [env (cpl/env-shadow env p1)]
-                           (IF-expand
-                             env
-                             [p1
-                              (QMARK-expand
-                                env
-                                [(vec bs)
-                                 (if others
-                                   (QMARK-expand env [(vec others) e1 b2])
-                                   e1)
-                                 b2])
-                              b2]))))))
+           0 nil
+           1 (exp b1)
+           2 (cond
+               (not (vector? b1)) (IF-expand env [b1 e1])
+               (not (seq b1)) (exp e1)
+               :else
+               (let [[pat expr & others] b1
+                     [p1 e1' & bs] (d/bindings pat (exp expr))]
+                 `(let ~[p1 e1']
+                    ~(let [env (cpl/env-shadow env p1)]
+                       (IF-expand
+                         env
+                         [p1
+                          (QMARK-expand
+                            env
+                            [(vec bs)
+                             (if others
+                               (QMARK-expand env [(vec others) e1])
+                               e1)])])))))
            ;else
            `(let [a# ~(QMARK-expand env (take 2 args))]
               (if (success? a#)
-                a# ~(QMARK-expand env (drop 2 args))))
-           #_(QMARK-expand
-               env
-               [b1 e1 (QMARK-expand env (concat [b2 e2] xs))]))))
+                a# ~(QMARK-expand env (drop 2 args)))))))
 
      (defmacro IF
        "you should not use this, please use `? instead"
