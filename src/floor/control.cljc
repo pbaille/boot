@@ -4,7 +4,8 @@
             [boot.generics :as g]
             [boot.named :as n]
             [boot.prelude :as p :refer [is]]
-            [floor.declaration :as d :refer [failure]])
+            [floor.declaration :as d :refer [failure]]
+            [floor.utils :as u])
   #?(:cljs (:require-macros [boot.control :refer [? let? ?> ?<]])))
 
 (def failure0 (failure ::failure))
@@ -92,8 +93,8 @@
                            `(? ~(vec others) ~then ~else)
                            then))
                      ~@(when else [else]))))))
-          ([b1 e1 b2 e2 & xs]
-           `(? ~b1 ~e1 (? ~b2 ~e2 ~@xs))))
+         ([b1 e1 b2 e2 & xs]
+          `(? ~b1 ~e1 (? ~b2 ~e2 ~@xs))))
 
        (defmacro or
          ([] (failure ::empty-or))
@@ -128,7 +129,7 @@
 
 ;; predicate importation
 
-(defn pred->guard [f]
+(defn pred->guard_bu [f & [failure]]
   (fn
     ([a] (if (f a) a failure))
     ([a b] (if (f a b) a failure))
@@ -136,15 +137,16 @@
     ([a b c d] (if (f a b c d) a failure))
     ([a b c d & others] (if (apply f a b c d others) a failure))))
 
+(defn pred->guard [f fail]
+  (u/fn& [a] (if (f a ...) a (fail a ...))))
+
 (comment
   ;; brutal
   (def core-preds
     (keys (filter (fn [[s _]] (c/= \? (last (name s))))
                   (ns-map 'clojure.core))))
 
-  #?(:clj (defmacro import-core-preds []
-            `(do ~@(mapv (fn [[s v]] `(def ~s (pred->guard ~v)))
-                         core-preds)))))
+  )
 
 (defn redloop [f a xs]
   (reduce (fn [a e] (or (f a e) (reduced failure)))
@@ -153,79 +155,93 @@
 (def core-guards
 
   (reduce
-    (fn [a k]
-      (assoc a k (pred->guard k)))
+    (fn [a s]
+      (let [val (eval s)
+            g (pred->guard val #(failure {:guard s :args (vec %&)}))]
+        (assoc a val g s g)))
     {}
-    [decimal?
-     contains?
-     every?
-     qualified-keyword?
-     satisfies?
-     seq?
-     fn?
-     vector?
-     any?
-     isa?
-     boolean?
-     char?
-     some?
-     inst?
-     simple-symbol?
-     pos?
-     sequential?
-     neg?
-     float?
-     set?
-     reversible?
-     map?
-     var?
-     empty?
-     string?
-     uri?
-     double?
-     map-entry?
-     int?
-     associative?
-     keyword?
-     even?
-     tagged-literal?
-     indexed?
-     counted?
-     future?
-     zero?
-     simple-keyword?
-     not-every?
-     class?
-     neg-int?
-     sorted?
-     nil?
-     bytes?
-     record?
-     identical?
-     ident?
-     qualified-ident?
-     true?
-     integer?
-     special-symbol?
-     ratio?
-     delay?
-     ifn?
-     nat-int?
-     chunked-seq?
-     distinct?
-     pos-int?
-     odd?
-     uuid?
-     false?
-     list?
-     simple-ident?
-     rational?
-     number?
-     not-any?
-     qualified-symbol?
-     seqable?
-     symbol?
-     coll?
+    '[decimal?
+      contains?
+      every?
+      qualified-keyword?
+      satisfies?
+      seq?
+      fn?
+      vector?
+      any?
+      isa?
+      boolean?
+      char?
+      some?
+      inst?
+      simple-symbol?
+      pos?
+      sequential?
+      neg?
+      float?
+      set?
+      reversible?
+      map?
+      var?
+      empty?
+      string?
+      uri?
+      double?
+      map-entry?
+      int?
+      associative?
+      keyword?
+      even?
+      tagged-literal?
+      indexed?
+      counted?
+      future?
+      zero?
+      simple-keyword?
+      not-every?
+      class?
+      neg-int?
+      sorted?
+      nil?
+      bytes?
+      record?
+      identical?
+      ident?
+      qualified-ident?
+      true?
+      integer?
+      special-symbol?
+      ratio?
+      delay?
+      ifn?
+      nat-int?
+      chunked-seq?
+      distinct?
+      pos-int?
+      odd?
+      uuid?
+      false?
+      list?
+      simple-ident?
+      rational?
+      number?
+      not-any?
+      qualified-symbol?
+      seqable?
+      symbol?
+      coll?
 
-     = > >= < <=]))
+      = > >= < <=]))
+
+#?(:clj (defmacro import-core-preds []
+          `(do ~@(mapcat (fn [[s v]] `[(ns-unmap '~(p/ns-sym) '~s)
+                                       (def ~s ~v)])
+                       (filter (comp symbol? key) core-guards)))))
+
+(import-core-preds)
+
+(? (seq? []) :a)
+
+
+
 

@@ -76,6 +76,11 @@
            (apply str)
            symbol))
 
+    (defn parse-symbol [s]
+      (when (symbol? s)
+        {:ns (symbol (c/or (namespace s) (str *ns*)))
+         :name (symbol (name s))}))
+
     #_(assert
         (= (symbol "") (sym))
         (= 'foobar
@@ -98,6 +103,7 @@
     (def sym0? (p = sym0))
 
     (defn ns-sym [] (symbol (str *ns*)))
+
 
     #?(:clj
        (do :ns-resolution
@@ -128,7 +134,10 @@
                    (instance? clojure.lang.Var x) (var-symbol x)
                    :else nil))
                (catch ClassNotFoundException _
-                 sym))))
+                 sym)))
+
+           (defn resolve-symbol [x]
+             (var-symbol (resolve x))))
 
        :cljs
        (defn ns-resolve-sym [sym]

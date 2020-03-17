@@ -1,7 +1,7 @@
 (ns boot.generics-t
   (:require [boot.prelude :as p])
   (#?(:clj :require :cljs :require-macros)
-   [boot.generics2 :as g :refer [generic generic+ fork]]
+   [boot.generics :as g :refer [generic generic+ fork]]
    [boot.types :as t :refer [isa]]))
 
 #_(+ 1 1)
@@ -42,11 +42,37 @@
   (g1 "a")
   (g1 (atom {})))
 
+(do :from-another-ns
+
+    (ns pouet.pouet
+      (:require [boot.generics :as g]
+                [boot.prelude :as p]
+                [boot.generics-t :as gt]))
+
+    (println *ns*)
+
+    (g/generic-spec 'gt/g1
+                    '([x]
+                      ;; link impl
+                      :link [:link x]))
+
+    (g/generic+ gt/g1 [x]
+                ;; link impl
+                :link [:link x])
+
+    (in-ns 'boot.generics-t)
+
+    (p/assert (= (g1 (first {:a 1}))
+                 [:link [:a 1]]))
+    )
+
+
+
 ;; poly arity exemple
 (generic g2
          ([x y]
-          :vec [:g2vec x y]
           :coll [:g2coll x y]
+          :vec [:g2vec x y] ;; this will overide the coll impl defined above for vectors, it has to be after
           :num [:g2num x y]
           :any [:g2any x y])
          ([x y z]
@@ -127,10 +153,10 @@
          (g1 [x] :g1fun)
          (g2 [x y] (list :g2fun2 x y)))
 
-#_(macroexpand '(boot.generics2/generic+ g2 ([x y] :fun [:g2fun2 x y])))
+#_(macroexpand '(boot.generics/generic+ g2 ([x y] :fun [:g2fun2 x y])))
 #_(clojure.core/extend clojure.lang.Fn
-  boot.generics-t/Ig2_2
-  {:p_g2_2 (clojure.core/fn ([x y] [:g2fun2 x y]))})
+    boot.generics-t/Ig2_2
+    {:p_g2_2 (clojure.core/fn ([x y] [:g2fun2 x y]))})
 #_(g/get-spec! 'g2)
 
 (p/assert
@@ -220,3 +246,18 @@
 (comment
   (g/get-reg)
   (macroexpand '()))
+
+(comment :benching-fn-vs-generic
+         (g/generic add-gn [x y] (+ x y))
+         (defn add-fn [x y] (+ x y))
+         (time (dotimes [_ 100000] (add-fn 1 2))) ;13.735035 msecs
+         (time (dotimes [_ 100000] (add-gn 1 2))) ;15.889764 msecs
+         )
+
+(comment :benching-fn-vs-generic
+
+         (defn add-fn [x y] (+ x y))
+         (defn add-fn2 [i o] (let [x i y o] (+ x y)))
+         (time (dotimes [_ 100000] (add-fn 1 2))) ;13.735035 msecs
+         (time (dotimes [_ 100000] (add-fn2 1 2))) ;15.889764 msecs
+         )

@@ -1,4 +1,5 @@
 (ns floor.declaration
+  (:refer-clojure :exclude [+])
   (:require [boot.generics :as g]
             [boot.prelude :as u]))
 
@@ -13,11 +14,23 @@
 
 (g/generic form [x] x)
 
+;; control
 (g/generic fail [x])
-;; TODO I want to write (deft failure [data] (fail [_] data))
-(g/deft :failure [data] []
+(g/deft failure [data]
         (fail [this] (:data this)))
 
+;; monoids
+(g/generic pure [x])
+(g/generic pure? [x])
+(g/reduction sip [x y])
+(g/reduction + [x y])
+
+;; iterables
+(g/generic iter [x])
+(g/generic vals [x])
+(g/generic idxs [x])
+
+;;
 (g/generic getter [x] (u/error "no getter impl for " x))
 (g/generic updater [x] (u/error "no updater impl for " x))
 (g/generic swaper [x] (u/error "no swaper impl for " x))
