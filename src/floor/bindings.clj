@@ -1,6 +1,7 @@
 (ns floor.bindings
   (:require [floor.declaration :as d :refer [bindings]]
             [floor.composite :as c]
+            [floor.control :as ctl]
             [boot.named :as n]
             [boot.generics :as g]
             [boot.prelude :as p :refer [cs]]
@@ -105,7 +106,7 @@
     (defn sym_form [seed mode]
       (condp = mode
         :short seed
-        :opt `(or ~seed nil)
+        :opt `(ctl/or ~seed nil)
         :strict `(or ~seed (ex-info "binding" {:failure (d/fail ~seed)}))))
 
     )

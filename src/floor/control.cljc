@@ -14,7 +14,73 @@
 (defn failure? [x] (g/implements? d/fail x))
 (defn success? [x] (not (failure? x)))
 
+(defn IF-form
+  ([test then]
+   (if (symbol? test)
+     `(if (success? ~test) ~then ~test)
+     `(let [t# ~test]
+        (if (success? t#) ~then t#))))
+  ([test then else]
+   (if else
+     `(if (success? ~test) ~then ~else)
+     (IF-form test then)))
+  ([test then test2 then2 & others]
+   (IF-form test then (apply IF-form test2 then2 others))))
+
+(defn IF-expand [env args]
+  (apply IF-form (map (partial cpl/expand env) args)))
+
+(defn QMARK-expand
+  [env [b1 e1 & more :as args]]
+  (let [exp (partial cpl/expand env)]
+    (condp = (count args)
+      0 nil
+      1 (exp b1)
+      2 (cond
+          (not (vector? b1)) (IF-expand env [b1 e1])
+          (not (seq b1)) (exp e1)
+          :else
+          (let [[pat expr & others] b1
+                [p1 e1' & bs] (d/bindings pat (exp expr))]
+            `(let ~[p1 e1']
+               ~(let [env (cpl/env-shadow env p1)]
+                  (IF-expand
+                    env
+                    [p1
+                     (QMARK-expand
+                       env
+                       [(vec bs)
+                        (if others
+                          (QMARK-expand env [(vec others) e1])
+                          e1)])])))))
+      ;else
+      `(let [a# ~(QMARK-expand env [b1 e1])]
+         (if (success? a#)
+           a# ~(QMARK-expand env more))))))
+
+#?(:clj
+
+   (do
+
+     (defmacro ? [& body]
+       (QMARK-expand {} body))
+
+     (defmacro or
+       ([] (failure ::empty-or))
+       ([x] x)
+       ([x & next]
+        `(? [or# ~x] or# (or ~@next))))
+
+     (defmacro and
+       ([] true)
+       ([x] x)
+       ([x & next] `(? ~x (and ~@next))))))
+
 (comment
+
+  (g/get-spec! 'd/fail)
+
+  (macroexpand '(g/implements? d/fail []))
 
   (require '[boot.prelude :as p :refer [is]])
 
@@ -53,7 +119,7 @@
 
       (d/bindings '!a failure0)
 
-      (is [nil 1] (? [?a failure0] [a 1] 2))
+      (is [nil 1] (macroexpand '(? [?a failure0] [a 1] 2)))
 
       (is [0 1] (? [?a 0] [a 1] 2))
 
@@ -79,97 +145,6 @@
 
   )
 
-#?(:clj
-
-   (do
-
-     (defn IF-form
-       ([test then]
-        (if (symbol? test)
-          `(if (success? ~test) ~then ~test)
-          `(let [t# ~test]
-             (if (success? t#) ~then t#))))
-       ([test then else]
-        (if else
-          `(if (success? ~test) ~then ~else)
-          (IF-form test then)))
-       ([test then test2 then2 & others]
-        (IF-form test then (apply IF-form test2 then2 others))))
-
-     (defn IF-expand [env args]
-       (apply IF-form (map (partial cpl/expand env) args)))
-
-     (defn QMARK-expand
-       [env [b1 e1 :as args]]
-       (let [exp (partial cpl/expand env)]
-         (condp = (count args)
-           0 nil
-           1 (exp b1)
-           2 (cond
-               (not (vector? b1)) (IF-expand env [b1 e1])
-               (not (seq b1)) (exp e1)
-               :else
-               (let [[pat expr & others] b1
-                     [p1 e1' & bs] (d/bindings pat (exp expr))]
-                 `(let ~[p1 e1']
-                    ~(let [env (cpl/env-shadow env p1)]
-                       (IF-expand
-                         env
-                         [p1
-                          (QMARK-expand
-                            env
-                            [(vec bs)
-                             (if others
-                               (QMARK-expand env [(vec others) e1])
-                               e1)])])))))
-           ;else
-           `(let [a# ~(QMARK-expand env (take 2 args))]
-              (if (success? a#)
-                a# ~(QMARK-expand env (drop 2 args)))))))
-
-     (defmacro IF
-       "you should not use this, please use `? instead"
-       ([test then]
-        `(let [t# ~test]
-           (if (success? t#) ~then t#)))
-       ([test then else]
-        `(if (success? ~test) ~then ~else))
-       ([test then test2 then2 & others]
-        `(IF ~test ~then (IF ~test2 ~then2 ~@others))))
-
-     (defmacro ?
-       ([] nil)
-       ([return] return)
-       ([bs then] `(? ~bs ~then nil))
-       ([bs then else]
-        (cond
-          (not (vector? bs)) `(IF ~bs ~then ~@(when else [else]))
-          (not (seq bs)) then
-          :else
-          (let [[pat expr & others] bs
-                [p1 e1 & bs] (d/bindings pat expr)]
-            `(let ~[p1 e1]
-               (IF ~p1
-                   (? ~(vec bs)
-                      ~(if others
-                         `(? ~(vec others) ~then ~else)
-                         then))
-                   ~@(when else [else]))))))
-       ([b1 e1 b2 e2 & xs]
-        `(? ~b1 ~e1 (? ~b2 ~e2 ~@xs))))
-
-     (defmacro or
-       ([] (failure ::empty-or))
-       ([x] x)
-       ([x & next]
-        `(? [or# ~x] or# (or ~@next))))
-
-     (defmacro and
-       ([] true)
-       ([x] x)
-       ([x & next] `(IF ~x (and ~@next))))))
-
-#_(clojure.walk/macroexpand-all '(let? [a 1 b 2] :io :no))
 (defn chain [fns]
   (if-not (seq fns)
     identity

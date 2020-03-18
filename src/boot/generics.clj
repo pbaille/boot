@@ -106,8 +106,7 @@
         (reduce
           (fn [a [t e]]
             (conj a {:type t :argv argv :arity arity :expr e}))
-          [] (do ;reverse
-               (partition 2 decls)))))
+          [] (partition 2 decls))))
 
     (defn variadify-argv [v]
       (vec (concat (butlast v) ['& (last v)])))
@@ -115,7 +114,7 @@
     (defn parse-case [x]
       (let [cnt (count x)]
         (cond
-          (= 1 cnt) (concat x [:any `(p/error "no implementation error")])
+          ;(= 1 cnt) (concat x [:any `(p/error "no implementation error")])
           (even? cnt) (concat (butlast x) [:any (last x)])
           :else x)))
 
@@ -126,6 +125,7 @@
              xs)))
 
     (p/assert
+      (split-cases (parse-cases '(([a]) ([a & xs]))))
       (= (parse-cases '([a] :any 1))
          (parse-cases '(([a] 1))))
       (= (parse-cases '([a] :vec 1 1))
@@ -205,6 +205,19 @@
                             :argv (p/argv-litt arity)}]))
              (into {}))))
 
+    (defn with-arity-map
+
+      [{:as spec :keys [cases protocol-prefix method-prefix]} arities]
+
+      (assoc spec
+        :arities
+        (->> arities
+             (map (fn [arity]
+                    [arity {:protocol-name (arify-name protocol-prefix arity)
+                            :method-name (arify-name method-prefix arity)
+                            :argv (p/argv-litt arity)}]))
+             (into {}))))
+
     (defn generic-spec [name body & {:keys [extension-ns]}]
 
       (let [doc (when (string? (first body)) (first body))
@@ -214,13 +227,14 @@
             variadic (some-> variadic format-variadic-case)
             variadic-arity (some-> variadic first count)
             cases (if-not variadic fixed (concat fixed [variadic]))
+            arities (into #{} (map (comp count first) cases))
             spec
             (as-> {:variadic? (boolean variadic)
                    :cases cases
                    :doc doc} X
                   (merge (derive-name name) X)
                   (with-compiled-cases X :extension-ns extension-ns)
-                  (with-arity-map X))]
+                  (with-arity-map X arities))]
 
         (assert (if variadic (= variadic-arity (apply max (-> spec :arities keys))) true)
                 "arity error, fixed arity > variadic arity")
@@ -241,7 +255,8 @@
                          :forkname (or forkname fullname))))]
         (with-arity-map
           (update (merge parent-spec names)
-                  :cases (fn [cs] (mapv forked-case cs))))))
+                  :cases (fn [cs] (mapv forked-case cs)))
+          (set (keys (:arities parent-spec))))))
 
     (defn dispatches-declarations [spec]
 
@@ -339,12 +354,13 @@
       [{:keys [name arities variadic?]}]
       (let [arities (sort arities)
             fixed-arities (if variadic? (butlast arities) arities)
-            variadic-arity (val (last arities))]
+            ]
         `(defn ~name
            ~@(mapv (fn [{:keys [argv method-name]}] `(~argv (~method-name ~@argv)))
                    (vals fixed-arities))
            ~@(when variadic?
-               (let [vsig (:argv variadic-arity)]
+               (let [variadic-arity (val (last arities))
+                     vsig (:argv variadic-arity)]
                  [`(~(variadify-argv vsig) (~(:method-name variadic-arity) ~@vsig))])))))
 
     (defn protocol-initialisation-form [spec]
