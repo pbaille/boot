@@ -218,7 +218,7 @@
                             :argv (p/argv-litt arity)}]))
              (into {}))))
 
-    (defn generic-spec [name body & {:keys [extension-ns]}]
+    (defn generic-spec [name body & {:keys [extension-ns lambda-case-compiler]}]
 
       (let [doc (when (string? (first body)) (first body))
             cases' (if doc (rest body) body)
@@ -233,7 +233,10 @@
                    :cases cases
                    :doc doc} X
                   (merge (derive-name name) X)
-                  (with-compiled-cases X :extension-ns extension-ns)
+                  (with-compiled-cases
+                    X
+                    :extension-ns extension-ns
+                    :lambda-case-compiler lambda-case-compiler)
                   (with-arity-map X arities))]
 
         (assert (if variadic (= variadic-arity (apply max (-> spec :arities keys))) true)
@@ -464,7 +467,8 @@
                 ([x#] x#)
                 (~@cases)
                 ([x# y# & others#]
-                 (reduce ~name (~name x# y#) others#))))
+                 :nil (reduce ~name (~name x# y#) others#)
+                 :any (reduce ~name (~name x# y#) others#))))
 
     (p/defmac generic+
       "add new cases to an existant generic
@@ -594,6 +598,7 @@
             :childs childs
             :parents parents})
 
+         ;; this is brutal, should only recompute what's nescessary
          (state/swap! assoc :guards (t/predmap))
 
          `(do
@@ -619,7 +624,8 @@
              class-sym (or class-sym (symbol class-str))
              spec (update spec :childs (fnil conj []) class-sym)]
          `(do (defrecord ~class-sym ~fields)
-              (def ~(symbol tag) ~(p/sym "->" class-sym))
+              (def ~(symbol tag) ~(p/sym '-> class-sym))
+              (generic ~(p/sym '-> (name tag)) [~'_])
               (tag+ ~spec))))
       ([tag fields]
        `(deft ~tag ~fields []))
@@ -628,6 +634,15 @@
              (if (vector? x) [x xs] [[] (cons x xs)])]
          `(deft ~{:tag (keyword tag) :parents parents
                   :impls (vec impls) :fields fields})))))
+
+(do (t/get-reg)
+    (t/get-guards)
+    (defmacro init-type-generic []
+      (let [prims (t/get-type :prim)]
+        `(do
+           (generic ~'type [~'_] ~@(interleave prims prims))
+           ~@(map (fn [p] `(generic ~(p/sym '-> p) [~'_])) prims))))
+    (macroexpand '(init-type-generic)))
 
 (comment
 

@@ -45,11 +45,20 @@
         (env-get env (first form))]
     (expand mobj env (parse mobj env form))))
 
+(defn expand-sym
+  [env sym]
+  (let [{:keys [substitute]}
+        (env-get env sym)]
+    (if substitute
+      (expand-sym env substitute)
+      sym)))
+
 (defn expand [e x]
   (compo/expand
     (cp x
         seq? (expand-seq e x)
         holycoll? ($ x (p expand e))
+        symbol? (expand-sym e x)
         x)))
 
 (defmacro def+ [name val metas]

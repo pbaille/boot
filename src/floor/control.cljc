@@ -6,8 +6,7 @@
             [boot.prelude :as p :refer [is]]
             [floor.declaration :as d :refer [failure]]
             [floor.utils :as u]
-            [floor.compiler :as cpl])
-  #?(:cljs (:require-macros [boot.control :refer [? let? ?> ?<]])))
+            [floor.compiler :as cpl]))
 
 (def failure0 (failure ::failure))
 
@@ -74,7 +73,24 @@
      (defmacro and
        ([] true)
        ([x] x)
-       ([x & next] `(? ~x (and ~@next))))))
+       ([x & next] `(? ~x (and ~@next))))
+
+     (defmacro f [& xs]
+       (let [{:keys [cases name]} (p/parse-fn xs)]
+         `(fn ~name
+            ~@(map (fn [[argv & body]]
+                     (let [body (if (= 1 (count body)) (first body) (list* 'do body))
+                           argv' (vec (take (count argv) (p/gensyms)))]
+                       `(~argv' (? ~(vec (interleave argv argv')) ~body))))
+                   cases))))
+
+     (clojure.walk/macroexpand-all '(f iop ([x] x) ([(pos? x) [a b c]] (+ x a b c))))
+
+     ()
+
+     ((f iop ([x] x) ([(pos? x) [a b c]] (+ x a b c)))
+      1)
+     ))
 
 (comment
 
@@ -166,16 +182,17 @@
 
 ;; predicate importation
 
-(defn pred->guard_bu [f & [failure]]
-  (fn
-    ([a] (if (f a) a failure))
-    ([a b] (if (f a b) a failure))
-    ([a b c] (if (f a b c) a failure))
-    ([a b c d] (if (f a b c d) a failure))
-    ([a b c d & others] (if (apply f a b c d others) a failure))))
+;; predicate is a function that can return true or false
+;; guard is a function that can return something or nil
 
-(defn pred->guard [f fail]
-  (u/fn& [a] (if (f a ...) a (fail a ...))))
+(defn predicate->guard [f]
+  (u/fn& [a] (when (f a ...) a)))
+
+(defn wrap-guard [f fail]
+  (u/fn& [a] (c/or (f a ...) (fail a ...))))
+
+(defn wrap-predicate [f fail]
+  (wrap-guard (predicate->guard f) fail))
 
 (comment
   ;; brutal
@@ -194,7 +211,8 @@
   (reduce
     (fn [a s]
       (let [val (eval s)
-            g (pred->guard val #(failure {:guard s :args (vec %&)}))]
+            fail #(failure {:predicate s :args (vec %&)})
+            g (wrap-predicate val fail)]
         (assoc a val g s g)))
     {}
     '[decimal?
@@ -275,7 +293,7 @@
                                        (def ~s ~v)])
                          (filter (comp symbol? key) core-guards)))))
 
-(import-core-preds)
+
 
 (? (seq? []) :a)
 

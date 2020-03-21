@@ -228,9 +228,19 @@
        (into #{:any} (p/kset reg))))
 
     (def builtin-types
-      (into #{:any} (concat (keys prims) (keys groups)))))
+      (into #{:any} (concat (keys prims) (keys groups))))
+
+    (defn split-prims []
+      (let [all (get-reg)
+            prim? (c/fn [[_ xs]] (c/every? #(c/or (c/nil? %) (c/symbol? %)) xs))]
+        {:prims (into {} (filter prim? all))
+         :groups (into {} (remove prim? all))
+         :all all}))
+    )
 
 (do :assertions
+
+    (split-prims)
 
     (p/assert
       (classes :nil)

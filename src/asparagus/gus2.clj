@@ -3682,11 +3682,11 @@
                 [:point (:num x) (:num y)] [x y])]
 
         (and
-            (eq :y0 (t [:point 1 0]))
-            (eq :x0 (t [:point 0 1]))
-            (eq :twin (t [:point 1 1]))
-            (eq [1 2] (t [:point 1 2]))
-            #_(throws (t [:point 1 "io"]))))
+          (eq :y0 (t [:point 1 0]))
+          (eq :x0 (t [:point 0 1]))
+          (eq :twin (t [:point 1 1]))
+          (eq [1 2] (t [:point 1 2]))
+          #_(throws (t [:point 1 "io"]))))
       ))
 
 (e+ tack
@@ -4049,3 +4049,4 @@
                    (re-compilable-members))
                  (conj ret (meta ms))
                  ms)))))
+

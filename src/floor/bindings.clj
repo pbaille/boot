@@ -7,17 +7,13 @@
             [boot.prelude :as p :refer [cs]]
             [boot.types :as t]))
 
-(defn line? [x]
-  (or (seq? x)
-      (vector? x)))
 
-(defmacro with-gensyms [xs & body]
-  `(let [~xs (map gensym ~(mapv #(str (name %) "_") xs))]
-     ~@body))
+
+
 
 (do :vec
 
-    (defn vec_raw-bindings [v seed options]
+    (defn bindings_raw-vec [v seed options]
       (let [cnt (count v)
             symseed? (symbol? seed)]
         (with-gensyms
@@ -25,16 +21,16 @@
           (let [vect (if symseed? seed vect)]
             (p/catv
               (when-not symseed? [vect seed])
-              (d/bindings ¡linecheck `(line? ~vect) options)
-              [_head `(take ~cnt ~vect)]
-              (d/bindings ¡size>= `(= (count ~_head) ~cnt) options)
-              [_tail `(drop ~cnt ~vect)]
-              (d/bindings ¡size= `(not (seq ~_tail)) options)
+              (bindings ¡linecheck `(line? ~vect) options)
+              [_head `(take ~vect ~cnt)]
+              (bindings ¡size>= `(= (count ~_head) ~cnt) options)
+              [_tail `(drop ~vec ~cnt)]
+              (bindings ¡size= `(not (seq ~_tail)) options)
               (mapcat
-                (fn [e i] (d/bindings e `(nth ~_head ~i (d/failure {:index-not-found ~i})) options))
+                (fn [e i] (bindings e `(nth ~_head ~i (failure {:index-not-found ~i})) options))
                 (seq v) (range)))))))
 
-    (defn vec_composite-bindings [v seed options]
+    (defn bindings_composite-vec [v seed options]
       (let [doti (p/indexof v '.)
             cars (vec (take doti v))
             [eli & queue] (drop (inc doti) v)
@@ -45,36 +41,34 @@
           (let [ysym (if symseed? seed ysym)]
             (p/catv
               (when-not symseed? [ysym seed])
-              (vec_raw-bindings cars `(take ~doti ~ysym) options)
-              (d/bindings eli `(drop ~doti ~ysym) options)
+              (bindings_raw-vec cars `(take ~doti ~ysym) options)
+              (bindings eli `(drop ~doti ~ysym) options)
               #_(bind.vec.body cars ysym doti)
               (when-not (zero? qcnt)
                 (p/catv
                   [cdr' eli]
-                  (d/bindings eli `(drop-last ~qcnt ~cdr') options)
+                  (bindings eli `(drop-last ~qcnt ~cdr') options)
                   [qsym `(take-last ~qcnt ~cdr')]
-                  (vec_raw-bindings queue qsym options)))))))))
+                  (bindings_raw-vec queue qsym options)))))))))
 
 (do :map
 
-
-
-    (defn map_keys-bindings [x seed options]
+    (defn bindings_map-keys [x seed options]
       (mapcat
         (fn [[k v]]
-          (d/bindings v `(get ~seed ~k) options))
+          (bindings v `(get ~seed ~k) options))
         x))
 
 
-    (defn map_raw-bindings [x seed options]
+    (defn bindings_raw-map [x seed options]
       (with-gensyms
         [¡mapcheck ¡seed]
         (p/catv
           [¡seed seed
            ¡mapcheck `(map? ~¡seed)]
-          (map_keys-bindings x ¡seed options))))
+          (bindings_map-keys x ¡seed options))))
 
-    (defn map_composite-bindings [x seed options]
+    (defn bindings_composite-map [x seed options]
       (let [rs (get x '.)
             m (dissoc x '.)
             ks (keys m)]
@@ -82,12 +76,12 @@
           [¡seed]
           (p/catv
             [¡seed seed]
-            (map_keys-bindings m ¡seed options)
-            (d/bindings rs `(dissoc ~¡seed ~@ks) options))))))
+            (bindings_map-keys m ¡seed options)
+            (bindings rs `(dissoc ~¡seed ~@ks) options))))))
 
 (do :sym
 
-    (defn sym_binding-mode [s default]
+    (defn bindings_symbol-mode [s default]
       (let [default (or default :short)]
         (condp = (first (name s))
           \¡ default
@@ -96,22 +90,22 @@
           \_ :short
           default)))
 
-    (defn sym_parse [x options]
+    (defn bindings_parse-symbol [x options]
       (let [name (name x)
             prefix (#{\? \! \¡ \_} (first name))]
         {:prefix prefix
          :name (if prefix (n/sym (next name)) x)
-         :mode (sym_binding-mode x (:binding-mode options))}))
+         :mode (bindings_symbol-mode x (:binding-mode options))}))
 
-    (defn sym_form [seed mode]
+    (defn bindings_symbol-form [seed mode]
       (condp = mode
         :short seed
         :opt `(ctl/or ~seed nil)
-        :strict `(or ~seed (ex-info "binding" {:failure (d/fail ~seed)}))))
+        :strict `(or ~seed (ex-info "binding" {:failure (fail ~seed)}))))
 
     )
 
-(def operators
+(def bindings_operators
   (atom
     {:&
      (fn [xs seed options]
@@ -119,29 +113,29 @@
          [seedsym]
          (apply p/catv
                 [seedsym seed]
-                (map #(d/bindings % seedsym options) xs))))
+                (map #(bindings % seedsym options) xs))))
 
      :ks
      (fn [xs seed options]
-       (d/bindings (zipmap (map (comp keyword :name sym_parse) xs) xs)
+       (bindings (zipmap (map (comp keyword :name bindings_parse-symbol) xs) xs)
                    seed options))
 
      :ks-req
      (fn [xs seed options]
-       (d/bindings (zipmap (map keyword xs) xs) seed options))
+       (bindings (zipmap (map keyword xs) xs) seed options))
 
      :ks-opt
      (fn [xs seed options]
        (let [keys (map keyword xs)
              opt-syms (map (partial p/sym "?") xs)]
-         (d/bindings (zipmap keys opt-syms) seed options)))
+         (bindings (zipmap keys opt-syms) seed options)))
 
      :ks-or
      (fn [xs seed options]
        (let [keys (take-nth 2 xs)
              or-exprs (map (fn [[k v]] `(or ~k ~v)) (partition 2 xs))]
          (p/catv
-           ((get @operators :ks-opt) keys seed options)
+           ((get @bindings_operators :ks-opt) keys seed options)
            (interleave keys or-exprs))))
 
      :cons
@@ -150,83 +144,88 @@
          [seedsym]
          (p/catv
            [seedsym seed]
-           (d/bindings a `(first ~seedsym) options)
-           (d/bindings b `(next ~seedsym) options))))
+           (bindings a `(first ~seedsym) options)
+           (bindings b `(next ~seedsym) options))))
 
      :quote
      (fn [[a] seed options]
-       (d/bindings (gensym "¡") `(= ~seed '~a) options))
+       (bindings (gensym "¡") `(= ~seed '~a) options))
 
      :bind_
      (fn [[p expr] seed options]
        (p/catv
          ['_ seed]
-         (d/bindings p expr options)))
+         (bindings p expr options)))
 
      :!
      (fn [[f & [p]] seed options]
-       (d/bindings (or p (gensym)) (list f seed) options))
+       (bindings (or p (gensym)) (list f seed) options))
 
      ::default
      (fn [[verb pat & args] seed options]
-       (d/bindings pat (list* verb seed args) options))}))
+       (bindings pat (list* verb seed args) options))}))
 
-(defn compile-binding-vector [xs & [options]]
+(defn bindings_compile-binding-vector [xs & [options]]
   (vec (mapcat (fn [[pat seed]]
-                 (d/bindings pat seed (or options {})))
+                 (bindings pat seed (or options {})))
                (partition 2 xs))))
 
-(defn unified
+(defn bindings_unified
   "takes a binding vector (like let) , compile it with 'bindings
    then add unification constraints on symbols that occurs multiple times"
   [xs]
   (loop [ret [] seen #{}
-         [a b & nxt] (compile-binding-vector xs)]
+         [a b & nxt] (bindings_compile-binding-vector xs)]
     (if a
       (if (seen a)
         (recur (conj ret (gensym) `(= ~a ~b)) seen nxt)
         (recur (conj ret a b) (conj seen a) nxt))
       ret)))
 
-(g/generic+ d/bindings
-            ([x seed options]
+(generic bindings
+         ([x]
+          )
 
-             :sym
-             (let [{:keys [name mode]}
-                   (sym_parse x options)]
-               [name (sym_form seed mode)])
+         ([x y] (bindings x y {}))
 
-             :vec
-             (if (c/single-dotted? x)
-               (vec_composite-bindings x seed options)
-               (vec_raw-bindings x seed options))
+         ([x seed options]
 
-             :map
-             (if (c/single-dotted? x)
-               (map_composite-bindings x seed options)
-               (map_raw-bindings x seed options))
+          :sym
+          (let [{:keys [name mode]}
+                (bindings_parse-symbol x options)]
+            [name (bindings_symbol-form seed mode)])
 
-             :lst
-             (let [[v & args] x]
-               (cs [k (and (symbol? v) (keyword v))
-                    op (get @operators k)]
-                   (op args seed options)
-                   ((::default @operators) (cons v args) seed options)))))
+          :vec
+          (if (c/single-dotted? x)
+            (bindings_composite-vec x seed options)
+            (bindings_raw-vec x seed options))
+
+          :map
+          (if (c/single-dotted? x)
+            (bindings_composite-map x seed options)
+            (bindings_raw-map x seed options))
+
+          :lst
+          (let [[v & args] x]
+            (cs [k (and (symbol? v) (keyword v))
+                 op (get @bindings_operators k)]
+                (op args seed options)
+                ((::default @bindings_operators) (cons v args) seed options)))))
 
 
 
 (comment
-  (d/bindings '[a b . c] 'x {})
-  (d/bindings '[a b c] 'x {})
-  (d/bindings '[a b . c] 'x {})
-  (d/bindings '[a b . c d] 'x {})
-  (d/bindings '{:a a :b bibi} 'x {})
-  (d/bindings '{:a a :b bibi . r} 'x {})
-  (d/bindings 'a 'x)
-  (d/bindings '?a 'x {})
-  (d/bindings '!a 'x {})
-  (d/bindings '¡a 'x {:binding-mode :strict})
-  (d/bindings '¡a 'x {})
-  (d/bindings '(& a b) 'x)
-  (d/bindings '(pos? a) 'x)
+  (bindings '[a b . c] 'x {})
+  (bindings '[a b c] 'x {})
+  (bindings '[a b . c] 'x {})
+  (bindings '[a b . c d] 'x {})
+  (bindings '{:a a :b bibi} 'x {})
+  (bindings '{:a a :b bibi . r} 'x {})
+  (bindings 'a 'x)
+  (bindings '?a 'x {})
+  (bindings '!a 'x {})
+  (bindings '¡a 'x {:binding-mode :strict})
+  (bindings '¡a 'x {})
+  (bindings '(& a b) 'x)
+  (bindings '(pos? a) 'x)
   )

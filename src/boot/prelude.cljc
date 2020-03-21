@@ -452,6 +452,14 @@
 
        (declare error)
 
+       (defmacro clj-only [& xs]
+         (when-not (:ns &env)
+           `(do ~@xs)))
+
+       (defmacro cljs-only [& xs]
+         (when (:ns &env)
+           `(do ~@xs)))
+
        (defmacro defmac
          "personal defmacro
           define a regular macro
@@ -584,6 +592,10 @@
 
        (defmacro f_ [& body]
          `(fn [~'_] ~@body))
+
+       (defmacro with-gensyms [xs & body]
+         `(let [~xs (map gensym ~(mapv #(str (name %) "_") xs))]
+            ~@body))
 
        (defmac fn-argumentation
                [& body]
