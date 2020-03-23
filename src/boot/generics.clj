@@ -462,13 +462,15 @@
         (generic-spec name cases)))
 
     (p/defmac reduction
-      [name & cases]
-      `(generic ~name
-                ([x#] x#)
-                (~@cases)
-                ([x# y# & others#]
-                 :nil (reduce ~name (~name x# y#) others#)
-                 :any (reduce ~name (~name x# y#) others#))))
+      ([name case]
+       `(reduction ~name ~@case))
+      ([name x & xs]
+       `(generic ~name
+                 ([x#] x#)
+                 (~x ~@xs)
+                 ([x# y# & others#]
+                  :nil (reduce ~name (~name x# y#) others#)
+                  :any (reduce ~name (~name x# y#) others#)))))
 
     (p/defmac generic+
       "add new cases to an existant generic

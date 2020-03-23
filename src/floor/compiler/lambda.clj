@@ -1,7 +1,7 @@
-(ns floor.lambda
+(ns floor.compiler.lambda
   (:refer-clojure :exclude [compile])
   (:require [boot.prelude :as p]
-            [floor.composite :as compo]))
+            [floor.compiler.composite :as compo]))
 
 (defn bodify [body]
   (if (= 1 (count body)) (first body) (list* 'do body)))
@@ -34,13 +34,20 @@
                  (interleave (map :pat xs) (repeat "\n")))))
 
 (defn parse [[fst & nxt :as form]]
-  (let [[name & cases]
-        (if (p/word? fst)
+  (let [[name fst & nxt]
+        (if (symbol? fst)
           (cons fst nxt)
           (concat [nil fst] nxt))
 
+        [doc & cases]
+        (if (string? fst)
+          (cons fst nxt)
+          (concat ["no doc" fst] nxt))
+
         cases
-        (partition 2 cases)
+        (if (every? seq? cases)
+          cases
+          (partition 2 cases))
 
         parsed-cases
         (map parse-case cases)
@@ -62,7 +69,8 @@
     (when variadic
       (check-variadic-sigs (:& arities)))
 
-    {:name name
+    {:doc doc
+     :name name
      :monadic monadic
      :variadic variadic
      :polyadic polyadic
@@ -95,3 +103,7 @@
 (defn compile [verb {:as parsed :keys [arity-map name]}]
   `(fn ~@(when name [name])
      ~@(map (partial compile-arity verb) arity-map)))
+
+(defn wrap-generic-body [body]
+  (let [{:as parsed :keys [arity-map name]} (parse body)]
+    (cons name (map (partial compile-arity 'floor.core/cs) arity-map))))

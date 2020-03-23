@@ -1,10 +1,11 @@
 (ns floor.core
-  (:refer-clojure :exclude [take drop cons or and * + vals iter vec map set str key fn nth])
+  (:refer-clojure
+    :exclude
+    [chunk case take drop cons or and * + vals iter vec map set str key fn nth])
   (:require [clojure.core :as c]
             [boot.generics :as g :refer [generic generic+ reduction]]
             [boot.named :as n]
             [boot.prelude :as p :refer [is isnt throws clj-only]]
-            [floor.utils :as u]
             [floor.compiler]
             [boot.types :as t]))
 
@@ -18,6 +19,12 @@
     (defn failure? [x] (g/implements? fail x))
     (defn success? [x] (not (failure? x)))
 
+    )
+
+(do :importation
+
+    (floor.compiler/import-core-macros)
+
     ;; predicates and guards importation
 
     ;; predicate is a function that can return true or false
@@ -26,15 +33,15 @@
     ;; we will bring builtin clojure predicates and guards into our failure based control flow system
 
     (defn predicate->guard [f]
-      (u/fn& [a] (when (f a ...) a)))
+      (p/fn& [a] (when (f a ...) a)))
 
     (defn wrap-guard [f fail]
-      (u/fn& [a] (c/or (f a ...) (fail a ...))))
+      (p/fn& [a] (c/or (f a ...) (fail a ...))))
 
     (defn wrap-predicate [f fail]
       (wrap-guard (predicate->guard f) fail))
 
-    (def core-guards
+    (def core-predicates
 
       (reduce
         (c/fn [a s]
@@ -52,7 +59,7 @@
           seqable? symbol? coll? not
           = > >= < <=]))
 
-    (def core-preds
+    (def core-guards
 
       (reduce
         (c/fn [a s]
@@ -68,7 +75,7 @@
       `(do ~@(mapcat (c/fn [[s v]]
                        `[(ns-unmap '~(p/ns-sym) '~s) (def ~s ~v)])
                      (filter (comp symbol? c/key)
-                             (merge core-guards core-preds)))))
+                             (merge core-predicates core-guards)))))
 
     (import-core-stuff)
 
@@ -96,7 +103,7 @@
                            (generic ~(p/sym k "?") [~'x]
                                     ~@(if (prims k) [k 'x] (c/interleave xs (c/repeat 'x)))
                                     :any (failure {:typecheck ~k :isnt ~'x}))
-                           (generic ~cast-sym [~'x])
+                           (generic ~cast-sym [~'x] ~k ~'x)
                            (defn ~(p/sym cast-sym "?") [x#]
                              (c/or (c/when (g/implements? ~cast-sym x#) x#)
                                    (failure {:not-castable {:to ~k :from x#}})))))) all))))
@@ -162,8 +169,8 @@
       :nil (iter b)
       :any (reduce sip a (iter b)))
 
-    (def wrap (u/fn& [x] (sip (pure x) ...)))
-    (def wrap+ (u/fn& [x] (+ (pure x) ...)))
+    (def wrap (p/fn& [x] (sip (pure x) ...)))
+    (def wrap+ (p/fn& [x] (+ (pure x) ...)))
     (def wrap* (partial apply wrap))
     (def wrap+* (partial apply wrap+))
 
@@ -173,10 +180,10 @@
              n* (p/sym n "*")
              n+* (p/sym n "+*")]
          `(do
-            (def ~n (u/fn& [] (sip ~e ...)))
-            (def ~n+ (u/fn& [] (+ ~e ...)))
-            (def ~n* (u/fn& [x#] (apply ~n x# ...)))
-            (def ~n+* (u/fn& [x#] (apply ~n+ x# ...))))))
+            (def ~n (p/fn& [] (sip ~e ...)))
+            (def ~n+ (p/fn& [] (+ ~e ...)))
+            (def ~n* (p/fn& [x#] (apply ~n x# ...)))
+            (def ~n+* (p/fn& [x#] (apply ~n+ x# ...))))))
       ([x & xs]
        `(do ~@(c/map #(list `defwrapped %) (c/cons x xs)))))
 
@@ -190,15 +197,15 @@
       c/str)
 
     (def str*
-      (u/fn& [x] (apply c/str x ...)))
+      (p/fn& [x] (apply c/str x ...)))
     (def key
-      (u/fn& [] (+ (c/keyword "") ...)))
+      (p/fn& [] (+ (c/keyword "") ...)))
     (def key*
-      (u/fn& [x] (apply key x ...)))
+      (p/fn& [x] (apply key x ...)))
     (def sym
-      (u/fn& [x] (+ (c/symbol (c/name x)) ...)))
+      (p/fn& [x] (+ (c/symbol (c/name x)) ...)))
     (def sym*
-      (u/fn& [x] (apply sym x ...)))
+      (p/fn& [x] (apply sym x ...)))
     )
 
 (do :iterables
@@ -302,31 +309,124 @@
 
 (do :callables
 
-    (generic invocation
-             [x]
-             :fun x
-             (c/constantly x))
-
     (generic application
              [x]
              :fun (c/partial apply x)
-             (c/partial apply (invocation x)))
+             (c/partial apply (->fun x)))
 
-    (defmacro callables_wrapper
-      [builder]
+    (defmacro def-callable
+      [name builder]
       (let [[_ [a1 [e1]] & cs]
-            (macroexpand-1 `(u/fn& [x#] ((~builder x#) ~'...)))]
-        `(c/fn (~a1 (c/partial ~e1)) ~@cs)))
+            (macroexpand-1 `(p/fn& [x#] ((~builder x#) ~'...)))]
+        `(c/defn ~name (~a1 (c/partial ~e1)) ~@cs)))
 
-    (def § (callables_wrapper invocation))
+    (def-callable § ->fun)
 
-    (def * (callables_wrapper application)))
+    (def-callable * application)
 
+    #_((->fun (c/fn [x] x)) 1)
+    )
 
+(do :walking
 
+    (g/reduction $
+                 [x f]
+                 :map (c/into {} (c/map (c/fn [[k v]] [k (§ f v)]) x))
+                 :set (c/set (c/map (§ f) x))
+                 :vec (c/mapv (§ f) x)
+                 :lst (c/map (§ f) x))
 
+    ;; $ indexed
+    (g/reduction $i
+                 [x f]
+                 :map (c/into {} (c/map (c/fn [[k v]] [k (§ f k v)]) x))
+                 :set (c/set (c/vals ($i (c/zipmap x x) f)))
+                 :vec (c/vec (c/map-indexed (§ f) x))
+                 :lst (c/map-indexed (§ f) x))
 
+    (deff walk
+          [x in out]
+          (cs (coll? x)
+              (out ($ x in))
+              (out x)))
 
+    (deff dfwalk
+          "depth first walk"
+          [x f]
+          (walk x #(dfwalk % f) f))
+
+    (deff bfwalk
+          "breadth first walk"
+          [x f]
+          (walk (f x) #(bfwalk % f) c/identity))
+
+    (deff walk?
+          [x node? f]
+          (cs [nxt (node? x)]
+              ($ nxt #(walk? % node? f))
+              (f x)))
+
+    (deff zip
+          "core/map(ish)"
+          [f . xs]
+          (* c/map f ($ xs iter)))
+
+    (deff red
+          "reduce with seed (init) as first argument
+          and variadic seq(s) argument (like map does)"
+          [x f xs]
+          (c/reduce (§ f) x xs)
+          [x f y . ys]
+          (red x (* f)
+               (* zip vec y ys))
+          #_(if (c/every? cons? xs)
+              (* red
+                 (* f x ($ xs car))
+                 f ($ xs cdr))
+              x))
+
+    (g/reduction $+
+                 ; $+ is to $ what c/mapcat is to c/map
+                 [x f]
+                 :any
+                 (* + #_(pure x) ($ x f)))
+
+    (g/reduction $i+
+                 ; $i+ is to $i what c/mapcat is to c/map
+                 [x f]
+                 :any
+                 (* + ($i x f)))
+
+    (deff zip+
+      "core/mapcat(ish)"
+      [f . xs]
+      (cs [ret (c/seq (* zip f xs))]
+          (* + ret) ()))
+
+    (deff scan
+          "similar to core/partition"
+          [x size step]
+          (let [[pre post] (splat x size)]
+            (if (cons? post)
+              (cons pre (scan (drop x step) size step))
+              (if (cons? pre)
+                (sip (pure x) pre)
+                (pure x)))))
+
+    (deff chunk
+          "split an iterable 'x by chunk of size 'size"
+          [x size]
+          (scan x size size))
+
+    (deff nths
+          "like core/take-nths"
+          [x n]
+          ($ (scan x n n) car))
+
+    (def braid
+      (c/partial zip+ (c/partial sip ())))
+
+    )
 
 
 (comment

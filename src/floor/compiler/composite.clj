@@ -1,6 +1,5 @@
-(ns floor.composite
-  (:require [boot.prelude :as p :refer [cp is]]
-            [floor.declaration :as d]))
+(ns floor.compiler.composite
+  (:require [boot.prelude :as p :refer [cp is]]))
 
 (def dot '.)
 (def dotdot '..)
