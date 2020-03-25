@@ -103,7 +103,7 @@
       (condp = mode
         :short seed
         :opt `(floor.core/or ~seed nil)
-        :strict `(floor.core/or ~seed (p/error "strict binding failure:\n" (floor.core/fail ~seed)))))
+        :strict `(floor.core/or ~seed (p/error "strict binding failure:\n" (:data ~seed)))))
 
     (comment
       (bindings '!a 'x {}))

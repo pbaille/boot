@@ -13,13 +13,10 @@
 
 (do :control
 
-    ;; failure
-    (g/generic fail [x])
-    (g/deft failure [data] (fail [this] (:data this)))
-
-    (def failure0 (failure ::failure))
-    (defn failure? [x] (g/implements? x fail))
-    (defn success? [x] (c/not (failure? x))))
+    (defrecord Failure [data])
+    (def failure ->Failure)
+    (defn failure? [x] (instance? Failure x))
+    (defn success? [x] (c/not (instance? Failure x))))
 
 (do :importation
 
@@ -100,8 +97,7 @@
 
     (p/defmac init-type-generics
       []
-      (c/let [{:keys [prims all]} (t/split-prims)
-              prims (c/dissoc prims :failure)]
+      (c/let [{:keys [prims all]} (t/split-prims)]
         `(do
            (g/generic ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
            ~@(c/map (c/fn [k] `(declare ~(p/sym k "?"))) (c/keys all))
@@ -115,7 +111,7 @@
                               (defn ~(p/sym cast-sym "?") [x#]
                                 (c/or (g/implements? x# ~cast-sym)
                                       (failure {:not-castable {:to ~k :from x#}}))))))
-                    (c/dissoc all :failure)))))
+                    all))))
 
     (init-type-generics)
 

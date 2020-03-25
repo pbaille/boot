@@ -22,25 +22,31 @@
 ;; conditional bindings
 
 (defn cs-return [ret else]
-  (let [retsym (gensym)]
-    `(let [~retsym ~ret]
-       (if (floor.core/success? ~retsym)
-         (get ~retsym ::cs-return)
-         ~(if (::void else) retsym else)))))
+  (if (::void else)
+    ret
+    (let [retsym (gensym)]
+      `(let [~retsym ~ret]
+         (if (floor.core/success? ~retsym)
+           (get ~retsym ::cs-return)
+           ~else)))))
 
-(defn cs-test-case [env test then else]
-  (let [retsym (gensym)]
+(defn cs-test-case
+  [env test then else]
+  (let [retsym (gensym)
+        raw-then (env/expand env then)
+        then (if (::void else) raw-then {::cs-return raw-then})]
     `(let [~retsym ~(env/expand env test)]
        (if (floor.core/success? ~retsym)
-         ~(cs-return (env/expand env then)
-                     (if (::void else) ~retsym (env/expand env else)))
+         ~(cs-return then (env/expand env else))
          ~retsym))))
 
-(defn cs-binding-case [env bs expr else options]
+(defn cs-binding-case
+  [env bs expr else options]
   (let [bs (bindings/bindings bs options)
         bs (if (:unified options) (bindings/unified bs options) bs)
         {:keys [env bindings]} (bindings/optimize env bs)
-        expr (env/expand env expr)]
+        raw-expr (env/expand env expr)
+        expr (if (::void else) raw-expr {::cs-return raw-expr})]
     (if-not (seq bindings)
       (cs-return expr else)
       (loop [ret expr
@@ -60,12 +66,17 @@
 
                (not (next more))
                (if (not (vector? b1))
-                 (cs-test-case env b1 {::cs-return e1} (first more))
-                 #_(if-expand env [b1 {::cs-return e1} (first more)])
-                 (cs-binding-case env b1 {::cs-return e1} (first more) options))
+                 (cs-test-case env b1 e1 (first more))
+                 (cs-binding-case env b1 e1 (first more) options))
 
                :else
                (cs-expand env [verb b1 e1 (cs-expand env (cons verb more))])))})
+
+(comment
+  (defn cs-test [form]
+    ((:expand (cs-mk {})) {} form))
+
+  (eval (cs-test '(cs [a 1 b 2] (+ a b) [a 10 b 12] :iop))))
 
 (defn let-mk [binding-form]
   {:expand (fn [env form]

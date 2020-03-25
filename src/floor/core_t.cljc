@@ -1,8 +1,5 @@
 (in-ns 'floor.core)
 
-
-(p/mx*' (? [a 1] a))
-
 (defmacro fails [& xs]
   `(do ~@(c/map (f [e] `(is (failure? ~e))) xs)))
 
@@ -60,12 +57,12 @@
              b (failure 2)] b
             :bottom))
 
-    (is [nil 1] (cs [?a failure0] [a 1] 2))
+    (is [nil 1] (cs [?a (failure 0)] [a 1] 2))
 
     (is [0 1] (cs [?a 0] [a 1] 2))
 
     (is ::catched
-        (try (cs [!a failure0] [a 1] 2) (catch Throwable e ::catched)))
+        (try (cs [!a (failure 0)] [a 1] 2) (catch Throwable e ::catched)))
 
     (is 3 (or (failure 1) (failure 2) 3))
     (is 3 (and 1 2 3))
@@ -338,49 +335,18 @@
     (is (?let [a 1 b a] (add a b))
         2)
 
-
-    (defmacro qb
-      ([e] `(qb 100000 ~e))
-      ([n e]
-       `(time (dotimes [_# ~n] ~e))))
-
-
-    (qb (cs [a 1 b a] (add a b)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) #:floor.compiler.expanders{:cs-return (add a a)} a))]
-        (if (floor.core/success? G__17516) (clojure.core/get G__17516 :floor.compiler.expanders/cs-return) G__17516)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) (add a a) a))]
-        (if (floor.core/success? G__17516) G__17516 G__17516)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if-not (instance? Failure a) (add a a) a))]
-        (if G__17516 G__17516 G__17516)))
-
-    (macroexpand '(g/implements? [] fail))
-
-
-    (time (dotimes [_ 100000] (g/implements? (failure 0) fail)))
-    (time (dotimes [_ 100000] (nil? nil)))
-    (time (dotimes [_ 100000] (c/let [a 1 b a] (add a b))))
-
     :guards
     "with guards ?let make sense"
-    (nil? (?let [(pos? a) -1] (p/error "never touched")))
+    (is (failure? (let [(pos? a) -1] (p/error "never touched"))))
 
     :bang-prefix
     "in ?let ! behaves the same as in let"
     (throws
-      (?let [!a (pos? -1)] :never))
+      (let [!a (pos? -1)] :never))
 
     :underscore-prefix
     "if you want to allow some binding to be nil in a ?let form use the _ prefix"
-    (is (macroexpand '(let [a 1 ?b (failure :aaaargg)] (add a (or b 0))))
+    (is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
         1)
 
 
@@ -402,3 +368,36 @@
     )
 
 
+(do :bench
+
+    (defmacro qb
+      ([e] `(qb 100000 ~e))
+      ([n e]
+       `(time (dotimes [_# ~n] ~e))))
+
+
+    (qb (cs [a 1 b a] (add a b)))
+    (qb (csu [a 1 a 1] (add a a)))
+    (qb (c/let [a 1 b a] (add a b)))
+
+    (qb
+      (let*
+        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) #:floor.compiler.expanders{:cs-return (add a a)} a))]
+        (if (floor.core/success? G__17516) (clojure.core/get G__17516 :floor.compiler.expanders/cs-return) G__17516)))
+
+    (qb
+      (let*
+        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) (add a a) a))]
+        (if (floor.core/success? G__17516) G__17516 G__17516)))
+
+    (qb
+      (let*
+        [G__17516 (clojure.core/let [a 1] (if-not (instance? Failure a) (add a a) a))]
+        (if G__17516 G__17516 G__17516)))
+
+    (macroexpand '(g/implements? [] fail))
+
+
+    (time (dotimes [_ 100000] (g/implements? (failure 0) fail)))
+    (time (dotimes [_ 100000] (nil? nil)))
+    (time (dotimes [_ 100000] (c/let [a 1 b a] (add a b)))))
