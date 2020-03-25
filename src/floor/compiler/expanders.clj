@@ -21,19 +21,33 @@
 
 ;; conditional bindings
 
-(defn cs-compile-case [env bs expr else options]
+(defn cs-return [ret else]
+  (let [retsym (gensym)]
+    `(let [~retsym ~ret]
+       (if (floor.core/success? ~retsym)
+         (get ~retsym ::cs-return)
+         ~(if (::void else) retsym else)))))
+
+(defn cs-test-case [env test then else]
+  (let [retsym (gensym)]
+    `(let [~retsym ~(env/expand env test)]
+       (if (floor.core/success? ~retsym)
+         ~(cs-return (env/expand env then)
+                     (if (::void else) ~retsym (env/expand env else)))
+         ~retsym))))
+
+(defn cs-binding-case [env bs expr else options]
   (let [bs (bindings/bindings bs options)
         bs (if (:unified options) (bindings/unified bs) bs)
         {:keys [env bindings]} (bindings/optimize env bs)
-        expr (env/expand env expr)
-        return-expr (fn [expr] `(let [ret# ~expr] (if (floor.core/success? ret#) (get ret# ::cs-return) ~else)))]
+        expr (env/expand env expr)]
     (if-not (seq bindings)
-      (return-expr expr)
+      (cs-return expr else)
       (loop [ret expr
              [[p1 e1] & pes :as bs]
              (reverse (partition 2 bindings))]
         (if-not (seq bs)
-          (return-expr ret)
+          (cs-return ret else)
           (recur `(let [~p1 ~e1] (if (floor.core/success? ~p1) ~ret ~p1))
                  pes))))))
 
@@ -42,17 +56,16 @@
              [env [verb b1 e1 & more :as form]]
              (cond
                (not more)
-               (cs-expand env [verb b1 e1 `(floor.core/failure ::cs)])
+               (cs-expand env [verb b1 e1 {::void true}])
 
                (not (next more))
                (if (not (vector? b1))
-                 (if-expand env [b1 {::cs-return e1} (first more)])
-                 (cs-compile-case env b1 {::cs-return e1} (first more) options))
+                 (cs-test-case env b1 {::cs-return e1} (first more))
+                 #_(if-expand env [b1 {::cs-return e1} (first more)])
+                 (cs-binding-case env b1 {::cs-return e1} (first more) options))
 
                :else
                (cs-expand env [verb b1 e1 (cs-expand env (cons verb more))])))})
-
-
 
 (defn let-mk [binding-form]
   {:expand (fn [env form]
@@ -109,14 +122,41 @@
   {:expand (fn [env [_ seed & cases]]
              (env/expand env (case-expand {:cases cases :seed seed :binding-form binding-form})))})
 
-((:expand (cs-mk {})) {}
- '(cs [a 1] a [b 2] b))
+(comment
 
-((:expand (lambda-mk 'floor.core/cs)) {}
- '(f [a] a))
+  ((:expand (cs-mk {})) {}
+   '(cs [a 1] a [b 2] b))
 
-((:expand (lambda-definition 'floor.core/cs)) {}
- '(deff iop [a] a))
+  ((:expand (lambda-mk 'floor.core/cs)) {}
+   '(f [a] a))
 
-((:expand (cs-mk {})) {}
- '(cs [a G__7272] a))
+  ((:expand (lambda-definition 'floor.core/cs)) {}
+   '(deff iop [a] a))
+
+  ((:expand (cs-mk {})) {}
+   '(cs [a 42] a)))
+
+
+(def or-expand
+  {:expand (fn self [env [v & xs]]
+             (let [retsym (gensym)]
+               (if xs
+                 `(let [~retsym ~(env/expand env (first xs))]
+                    (if (floor.core/success? ~retsym)
+                      ~retsym
+                      ~(if (next xs)
+                         (self env (list* v (next xs)))
+                         retsym)))
+                 `(floor.core/failure ::or))))})
+
+(def and-expand
+  {:expand (fn self [env [v & xs]]
+             (let [retsym (gensym)]
+               (if xs
+                 `(let [~retsym ~(env/expand env (first xs))]
+                    (if (floor.core/success? ~retsym)
+                      ~(if (next xs)
+                         (self env (list* v (next xs)))
+                         retsym)
+                      ~retsym))
+                 true)))})

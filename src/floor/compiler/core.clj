@@ -14,6 +14,9 @@
       '?csu (exp/cs-mk {:binding-mode :opt :unified true})
       '!csu (exp/cs-mk {:binding-mode :strict :unified true})
 
+      'or exp/or-expand
+      'and exp/and-expand
+
       'let (exp/let-mk 'floor.core/cs)
       '?let (exp/let-mk 'floor.core/!cs)
       '!let (exp/let-mk 'floor.core/!csu)

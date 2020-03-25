@@ -577,7 +577,7 @@
               (test/is (~'= ~x ~@xs))))
 
        (defmacro isnt [x & xs]
-         `(test/is (~'= nil ~x ~@xs)))
+         `(test/is (= nil ~x ~@xs)))
 
        (defmacro let-dbg [bs & bod]
          `(let ~(vec (mapcat (fn [[p e]] [p `(prob '~p ~e)]) (partition 2 bs)))

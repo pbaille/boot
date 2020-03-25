@@ -20,27 +20,28 @@
   (bindings '(pos? a) 'x)
   )
 
+(or (failure 1) (failure 2))
+
 (do :control
 
     (is 1 (cs [a 1] a))
 
-    (is failure0
-        (cs [a failure0] a))
+    (is (failure 1)
+        (cs [a (failure 1)] a))
 
     (is (failure "my failure")
         (cs [a (failure "my failure")] a))
 
-    (p/throws (!cs failure0))
-    (p/throws (!cs [a failure0] a))
+    (p/throws (!cs [a (failure 1)] a))
     (is 1 (!cs [a 1] a))
 
-    (is 1 (cs [a failure0] a 1))
+    (is 1 (cs [a (failure 1)] a 1))
 
-    (is 1 (cs [a failure0] a
+    (is 1 (cs [a (failure 1) ] a
               [b 1] b))
 
     (is (failure 2)
-        (cs [a failure0] a
+        (cs [a  (failure 1)] a
             [b (failure 2)] b))
 
     (is :bottom
@@ -57,23 +58,10 @@
     (is ::catched
         (try (cs [!a failure0] [a 1] 2) (catch Throwable e ::catched)))
 
-    (clojure.walk/macroexpand-all '(cs [a failure0] a
-                                       [b (failure 2)] b))
+    (is 3 (or (failure 1) (failure 2) 3))
+    (is 3 (and 1 2 3))
+    (is (failure 3) (and 1 2 (failure 3) 4))
 
-
-    (macroexpand (CS-expand
-                   {}
-                   '([[a b c] failure0] a
-                     [[a b c] (failure 2)] b
-                     pouet)
-                   {}))
-
-    (CS-expand
-      {}
-      '([[a b c] pouet] :iop :nop)
-      {})
-
-    (bindings '[a b c] 'xs)
     )
 
 (do :iterables
@@ -147,10 +135,11 @@
 
     ;; cons?
     (is (cons? [1 2]) [1 2])
-    (isnt (cons? []))
+    (is (failure? (cons? [])))
     (is (cons? (lst 1 2)) (lst 1 2))
-    (isnt (cons? (lst)))
+    (is (failure? (cons? (lst))))
     (is (cons? {:a 1}) {:a 1})
-    (isnt (cons? {}))
-    (isnt (cons? #{})))
+    (is (failure? (cons? {})))
+    (is (failure? (cons? #{}))))
+
 

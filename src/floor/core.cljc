@@ -58,8 +58,10 @@
           = > >= < <=]))
 
     (defn not [x]
-        (if (c/contains? #{false nil} x)
-          x (failure ::not-failure)))
+        (cond
+          (c/contains? #{false nil} x) x
+          (failure? x) true
+          :else (failure ::not-failure)))
 
     (def core-guards
 
@@ -98,7 +100,8 @@
 
     (p/defmac init-type-generics
       []
-      (c/let [{:keys [prims all]} (t/split-prims)]
+      (c/let [{:keys [prims all]} (t/split-prims)
+              prims (c/dissoc prims :failure)]
         `(do
            (g/generic ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
            ~@(c/map (c/fn [k] `(declare ~(p/sym k "?"))) (c/keys all))
@@ -111,7 +114,8 @@
                               (g/generic ~cast-sym [~'x] ~k ~'x)
                               (defn ~(p/sym cast-sym "?") [x#]
                                 (c/or (g/implements? x# ~cast-sym)
-                                      (failure {:not-castable {:to ~k :from x#}})))))) all))))
+                                      (failure {:not-castable {:to ~k :from x#}}))))))
+                    (c/dissoc all :failure)))))
 
     (init-type-generics)
 
