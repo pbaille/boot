@@ -1,4 +1,4 @@
-(ns floor.compiler.expansion
+(ns floor.compiler.env
   (:require [floor.compiler.composite :as compo]
             [boot.prelude :as p :refer [cp cs $ p is]]))
 
@@ -49,7 +49,7 @@
       (let [{:keys [substitute]}
             (env-get env sym)]
         (if substitute
-          (expand-sym env substitute)
+          (expand env substitute)
           sym)))
 
     (defn expand [env form]
@@ -75,7 +75,7 @@
 
         (env-get {} '=)
 
-        (is (expand {'floor.compiler.expansion {'rev (expander [env form] (reverse ($ (next form) (p expand env))))}}
+        (is (expand {'floor.compiler.env {'rev (expander [env form] (reverse ($ (next form) (p expand env))))}}
                     '(rev 1 (mvar 2 4) [3 . xs] +)
                     )
             '(+ (clojure.core/vec (clojure.core/concat [3] xs)) :pouet 1))))

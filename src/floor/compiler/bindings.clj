@@ -3,7 +3,7 @@
             [boot.prelude :as p :refer [cs]]
             [boot.generics :as g]
             [floor.compiler.composite :as compo]
-            [floor.compiler.expansion :as exp]))
+            [floor.compiler.env :as exp]))
 
 (g/generic bindings
          ([x options])

@@ -1,13 +1,15 @@
 (ns floor.core
   (:refer-clojure
     :exclude
-    [chunk case take drop cons or and * + vals iter vec map set str key fn nth])
+    [let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
   (:require [clojure.core :as c]
-            [boot.generics :as g :refer [generic generic+ reduction]]
+            [boot.generics :as g]
             [boot.named :as n]
             [boot.prelude :as p :refer [is isnt throws clj-only]]
-            [floor.compiler]
+            [floor.compiler.core :as compiler]
             [boot.types :as t]))
+
+(compiler/import-core-macros)
 
 (do :control
 
@@ -16,14 +18,10 @@
     (g/deft failure [data] (fail [this] (:data this)))
 
     (def failure0 (failure ::failure))
-    (defn failure? [x] (g/implements? fail x))
-    (defn success? [x] (not (failure? x)))
-
-    )
+    (defn failure? [x] (g/implements? x fail))
+    (defn success? [x] (not (failure? x))))
 
 (do :importation
-
-    (floor.compiler/import-core-macros)
 
     ;; predicates and guards importation
 
@@ -48,7 +46,7 @@
           (let [val (eval s)
                 fail #(failure {:predicate s :args (c/vec %&)})
                 g (wrap-predicate val fail)]
-            (assoc a val g s g)))
+               (assoc a val g s g)))
         {}
         '[decimal? contains? every? qualified-keyword? satisfies? seq? fn? vector? any? isa? boolean?
           char? some? inst? simple-symbol? pos? sequential? neg? float? set? reversible? map? var? empty?
@@ -59,6 +57,10 @@
           seqable? symbol? coll? not
           = > >= < <=]))
 
+    (defn not [x]
+        (if (c/contains? #{false nil} x)
+          x (failure ::not-failure)))
+
     (def core-guards
 
       (reduce
@@ -66,9 +68,11 @@
           (let [val (eval s)
                 fail #(failure {:predicate s :args (c/vec %&)})
                 g (wrap-guard val fail)]
-            (assoc a val g s g)))
+               (assoc a val g s g)))
         {}
         '[next seq]))
+
+    (p/pp core-predicates)
 
     (p/defmac import-core-stuff
       []
@@ -93,20 +97,20 @@
 
     (p/defmac init-type-generics
       []
-      (let [{:keys [prims all]} (t/split-prims)]
+      (c/let [{:keys [prims all]} (t/split-prims)]
         `(do
-           (generic ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
+           (g/generic ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
            ~@(c/map (c/fn [k] `(declare ~(p/sym k "?"))) (c/keys all))
            ~@(c/map (c/fn [[k xs :as e]]
                       (let [cast-sym (p/sym '-> k)]
-                        `(do
-                           (generic ~(p/sym k "?") [~'x]
+                           `(do
+                              (g/generic ~(p/sym k "?") [~'x]
                                     ~@(if (prims k) [k 'x] (c/interleave xs (c/repeat 'x)))
                                     :any (failure {:typecheck ~k :isnt ~'x}))
-                           (generic ~cast-sym [~'x] ~k ~'x)
-                           (defn ~(p/sym cast-sym "?") [x#]
-                             (c/or (c/when (g/implements? ~cast-sym x#) x#)
-                                   (failure {:not-castable {:to ~k :from x#}})))))) all))))
+                              (g/generic ~cast-sym [~'x] ~k ~'x)
+                              (defn ~(p/sym cast-sym "?") [x#]
+                                (c/or (g/implements? x# ~cast-sym)
+                                      (failure {:not-castable {:to ~k :from x#}})))))) all))))
 
     (init-type-generics)
 
@@ -114,7 +118,7 @@
 
 (do :monoids
 
-    (generic
+    (g/generic
       pure
       [_]
       :fun identity
@@ -133,13 +137,13 @@
         (is {} (pure {:a 1}))
         (is "" (pure "hello")))
 
-    (generic
+    (g/generic
       pure?
       [x]
       :lst (when-not (c/seq x) ())
       (when (c/= x (pure x)) x))
 
-    (reduction
+    (g/reduction
       sip [a b]
       :lst (c/concat a [b])
       #{:set :vec} (c/conj a b)
@@ -155,9 +159,9 @@
       (is ((sip c/+ 1) 1) 2))
 
     ;; declaration (see implementation in titerable section
-    (generic iter [x])
+    (g/generic iter [x])
 
-    (reduction
+    (g/reduction
       +
       [a b]
       :fun (comp b a)
@@ -179,11 +183,11 @@
        (let [n+ (p/sym n "+")
              n* (p/sym n "*")
              n+* (p/sym n "+*")]
-         `(do
-            (def ~n (p/fn& [] (sip ~e ...)))
-            (def ~n+ (p/fn& [] (+ ~e ...)))
-            (def ~n* (p/fn& [x#] (apply ~n x# ...)))
-            (def ~n+* (p/fn& [x#] (apply ~n+ x# ...))))))
+            `(do
+               (def ~n (p/fn& [] (sip ~e ...)))
+               (def ~n+ (p/fn& [] (+ ~e ...)))
+               (def ~n* (p/fn& [x#] (apply ~n x# ...)))
+               (def ~n+* (p/fn& [x#] (apply ~n+ x# ...))))))
       ([x & xs]
        `(do ~@(c/map #(list `defwrapped %) (c/cons x xs)))))
 
@@ -210,27 +214,33 @@
 
 (do :iterables
 
-    (generic+
+    (g/generic+
       iter
       [a]
       :nil ()
       #{:sym :key} (iter (c/name a))
       :any (c/or (c/seq a) ()))
 
-    (generic
+    (g/generic
       vals
       [x]
       :map (c/or (c/vals x) ())
       :coll (iter x)
       :any (p/error "vals: no impl for " x))
 
-    (generic
+    (g/generic
       idxs
       [x]
       :map (c/or (c/keys x) ())
       :set (iter x)
       :coll (range (count x))
       :any (p/error "idxs: no impl for " x))
+
+    (g/generic nth
+               ([x i]
+                (nth (iter x) i (failure {:idx-not-found i :in x})))
+               ([x i not-found]
+                (c/nth x i not-found)))
 
     (p/defmac defiterg
       "an update to define generic functions for iterables
@@ -244,10 +254,10 @@
          ~expr
          (let [a# ~a1
                ~a1 (iter ~a1)]
-           (wrap* a# ~expr))))
+              (wrap* a# ~expr))))
 
-    (generic car [x] (c/first (iter x)))
-    (generic last [x] (c/last (iter x)))
+    (g/generic car [x] (c/first (iter x)))
+    (g/generic last [x] (c/last (iter x)))
     (defiterg take [x n] (c/take n x))
     (defiterg drop [x n] (c/drop n x))
     (defiterg takend [x n] (c/take-last n x))
@@ -280,18 +290,13 @@
        but preserve collection type"
       [& xs]
       (let [[cars cdr] (runcs xs)]
-        (+ (pure cdr) cars cdr)))
+           (+ (pure cdr) cars cdr)))
 
     (defn cons? [x]
-      (when (c/and (g/implements? iter x)
-                   (c/not (pure? x)))
-        x))
-
-    (generic nth
-             ([x i]
-              (nth (iter x) i (failure {:idx-not-found i :in x})))
-             ([x i not-found]
-              (c/nth x i not-found)))
+      (cs (c/and (g/implements? x iter)
+                 (not (pure? x)))
+          x
+          (failure {:not-cons x})))
 
     ;; vector optimized impls
 
@@ -309,23 +314,46 @@
 
 (do :callables
 
-    (generic application
+    (g/generic application
              [x]
              :fun (c/partial apply x)
              (c/partial apply (->fun x)))
 
     (defmacro def-callable
       [name builder]
-      (let [[_ [a1 [e1]] & cs]
+      (let [[_ [a1 [e1]] . cs]
             (macroexpand-1 `(p/fn& [x#] ((~builder x#) ~'...)))]
-        `(c/defn ~name (~a1 (c/partial ~e1)) ~@cs)))
+           `(c/defn ~name (~a1 (c/partial ~e1)) ~@cs)))
 
     (def-callable § ->fun)
 
     (def-callable * application)
 
     #_((->fun (c/fn [x] x)) 1)
-    )
+
+    (deff argumentation
+
+          "in asparagus, many functions takes what we can call the object as first argument
+           I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
+           the argumentation function will help to turn this kind of function into a one that takes only the arguments (in the previous exemple: :a 1 :b 2)
+           and return a function that takes only the target object, and return the result.
+           (let [assoc_ (argumentation assoc)
+                 assoc-a-and-b (assoc_ :a 1 :b 2)]
+              (assoc-a-and-b {})) ;=> {:a 1 :b 2}
+
+           many of the asparagus functions of this form, have their subjectified version with the same name suffixed with _
+           this is handy, for instance, to create chains of 1 argument functions
+           (> myseq (take_ 3) (dropend_ 2)) will thread 'myseq thru 2 functions, the semantics is analog to core/-> but it is a function
+           the '> function is defined in the :invocation-application-mapping section (the previous one)
+           (>_ (take_ 3) (dropend_ 2)) ;; will return a function that wait for its first argument ('myseq in the previous example)
+
+           the idea behind this is to ease function composition, the preference for guards over predicates is also a step in this direction
+           the further 'flow section will introduce some useful functional constructs that go even further (in conjunction with this and guards)"
+          [f]
+          (p/fn& [] (c/fn [x] (f x ...))))
+
+    (is {:a 1 :b 2 :c 3}
+        (((argumentation c/assoc) :a 1 :b 2) {:c 3})))
 
 (do :walking
 
@@ -398,20 +426,20 @@
                  (* + ($i x f)))
 
     (deff zip+
-      "core/mapcat(ish)"
-      [f . xs]
-      (cs [ret (c/seq (* zip f xs))]
-          (* + ret) ()))
+          "core/mapcat(ish)"
+          [f . xs]
+          (cs [ret (c/seq (* zip f xs))]
+              (* + ret) ()))
 
     (deff scan
           "similar to core/partition"
           [x size step]
           (let [[pre post] (splat x size)]
-            (if (cons? post)
-              (cons pre (scan (drop x step) size step))
-              (if (cons? pre)
-                (sip (pure x) pre)
-                (pure x)))))
+               (if (cons? post)
+                 (cons pre (scan (drop x step) size step))
+                 (if (cons? pre)
+                   (sip (pure x) pre)
+                   (pure x)))))
 
     (deff chunk
           "split an iterable 'x by chunk of size 'size"

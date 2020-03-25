@@ -494,10 +494,17 @@
 
     (p/defmac implements?
       "test if something implements a generic"
-      [name v]
-      (let [gspec (get-spec! name)]
-        `(or ~@(mapv (fn [protocol-name] `(satisfies? ~(with-ns (:ns gspec) protocol-name) ~v))
-                     (map (comp :protocol-name val) (:arities gspec))))))
+      ([v name]
+       (let [gspec (get-spec! name)
+             vsym (gensym)]
+         `(let [~vsym ~v]
+            (when (or ~@(mapv (fn [protocol-name] `(satisfies? ~(with-ns (:ns gspec) protocol-name) ~vsym))
+                              (map (comp :protocol-name val) (:arities gspec))))
+              ~vsym))))
+      ([v name & names]
+       (let [vsym (gensym)]
+         `(let [~vsym ~v]
+            (and ~@(map (fn [n] `(implements? ~vsym ~n)) (cons name names)))))))
 
     (p/defmac compile-all!
       [] `(do ~@(map protocol-extension-form (vals (get-reg)))))
@@ -637,14 +644,7 @@
          `(deft ~{:tag (keyword tag) :parents parents
                   :impls (vec impls) :fields fields})))))
 
-(do (t/get-reg)
-    (t/get-guards)
-    (defmacro init-type-generic []
-      (let [prims (t/get-type :prim)]
-        `(do
-           (generic ~'type [~'_] ~@(interleave prims prims))
-           ~@(map (fn [p] `(generic ~(p/sym '-> p) [~'_])) prims))))
-    (macroexpand '(init-type-generic)))
+
 
 (comment
 
@@ -653,9 +653,12 @@
 
   (do :implements?-test
       (generic gg1 [x y] :vec [:gg1-vec x y])
+      (generic gg2 [x] [:gg2 x])
+      (generic gg3 [x] :str [:gg3-str x])
       (get-spec! 'gg1)
-      (implements? gg1 1)
-      (implements? gg1 []))
+      (implements? 1 gg1)
+      (implements? [] gg1 gg2)
+      (implements? [] gg1 gg2 gg3))
 
   (do :thing-test
 
@@ -678,21 +681,3 @@
          :class-sym POUUUUUET
          #_(g1 [x] "g1foo")}))
 
-
-
-
-(comment :resolution-xp
-
-         (defn resolve-deep [x env]
-           (clojure.walk/prewalk
-             (fn [x] (if (symbol? x) (resolve env x) x))
-             x))
-
-         (def generic-spec [name body env]
-           (let [spec (generic-spec name body)
-                 spec (update spec :cases resolve-deep)]))
-
-         (cljs.analyzer/res)
-         (clojure.walk/macroexpand-all
-           '(let [z 1 a (fn [x] (let [y x] (+ x y z)))]
-              (fn [i] (+ i (a i))))))

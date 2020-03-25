@@ -4,7 +4,10 @@
             [floor.compiler.composite :as compo]))
 
 (defn bodify [body]
-  (if (= 1 (count body)) (first body) (list* 'do body)))
+  (condp = (count body)
+     0 ::void
+     1 (first body)
+     (list* 'do body)))
 
 (defn parse-case [[pat & body]]
   (let [arity
@@ -34,6 +37,7 @@
                  (interleave (map :pat xs) (repeat "\n")))))
 
 (defn parse [[fst & nxt :as form]]
+  (println "form " form)
   (let [[name fst & nxt]
         (if (symbol? fst)
           (cons fst nxt)
@@ -47,7 +51,9 @@
         cases
         (if (every? seq? cases)
           cases
-          (partition 2 cases))
+          (partition 2 2 nil cases))
+
+        ;_ (println cases)
 
         parsed-cases
         (map parse-case cases)
