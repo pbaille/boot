@@ -38,7 +38,7 @@
 
 (defn cs-binding-case [env bs expr else options]
   (let [bs (bindings/bindings bs options)
-        bs (if (:unified options) (bindings/unified bs) bs)
+        bs (if (:unified options) (bindings/unified bs options) bs)
         {:keys [env bindings]} (bindings/optimize env bs)
         expr (env/expand env expr)]
     (if-not (seq bindings)

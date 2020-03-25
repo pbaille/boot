@@ -92,7 +92,7 @@
           \_ :short
           default)))
 
-    (defn parse-symbol [x options]
+    (defn parse-symbol [x & [options]]
       (let [name (name x)
             prefix (#{\? \! \¡ \_} (first name))]
         {:prefix prefix
@@ -168,7 +168,14 @@
 
      ::default
      (fn [[verb pat & args] seed options]
-       (bindings pat (list* verb seed args) options))}))
+       (p/with-gensyms
+         [seedsym typecheck]
+         (if (keyword? verb)
+           (bindings [seedsym seed
+                      typecheck `(floor.core/eq (floor.core/type ~seedsym) ~verb)
+                      pat seedsym]
+                     options)
+           (bindings pat (list* verb seed args) options))))}))
 
 (defn compile-binding-vector [xs & [options]]
   (vec (mapcat (fn [[pat seed]]
@@ -178,12 +185,12 @@
 (defn unified
   "takes a binding vector (like let) , compile it with 'bindings
    then add unification constraints on symbols that occurs multiple times"
-  [xs]
+  [xs & [options]]
   (loop [ret [] seen #{}
          [a b & nxt] (compile-binding-vector xs)]
     (if a
       (if (seen a)
-        (recur (conj ret (gensym) `(= ~a ~b)) seen nxt)
+        (recur (p/catv ret (bindings (gensym) `(floor.core/eq ~a ~b) options)) seen nxt)
         (recur (conj ret a b) (conj seen a) nxt))
       ret)))
 

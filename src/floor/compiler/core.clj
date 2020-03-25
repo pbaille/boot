@@ -18,11 +18,11 @@
       'and exp/and-expand
 
       'let (exp/let-mk 'floor.core/cs)
-      '?let (exp/let-mk 'floor.core/!cs)
+      '?let (exp/let-mk 'floor.core/?cs)
       '!let (exp/let-mk 'floor.core/!csu)
       'lut (exp/let-mk 'floor.core/csu)
       '?lut (exp/let-mk 'floor.core/?cs)
-      '!lut (exp/let-mk 'floor.core/?csu)
+      '!lut (exp/let-mk 'floor.core/!csu)
 
       'f (exp/lambda-mk 'floor.core/cs)
       '?f (exp/lambda-mk 'floor.core/?cs)

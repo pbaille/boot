@@ -136,12 +136,6 @@
       :key (keyword "")
       #{:nil :any} nil)
 
-    (do :assertions
-        (is [] (pure [1 2 3]))
-        (is #{} (pure #{:pouet 12}))
-        (is {} (pure {:a 1}))
-        (is "" (pure "hello")))
-
     (g/generic
       pure?
       [x]
@@ -155,13 +149,6 @@
       :map (c/assoc a (c/first b) (c/second b))
       :fun (c/partial a b)
       :nil (c/list b))
-
-    (do
-      (is (sip [] 1 2) [1 2])
-      (is (sip [1] 2 3) [1 2 3])
-      (is (sip #{1} 2 3) #{1 2 3})
-      (is (sip {:a 1} [:b 2] [:c 3]) {:a 1 :b 2 :c 3})
-      (is ((sip c/+ 1) 1) 2))
 
     ;; declaration (see implementation in titerable section
     (g/generic iter [x])
@@ -229,16 +216,16 @@
     (g/generic
       vals
       [x]
-      :map (c/or (c/vals x) ())
       :coll (iter x)
+      :map (c/or (c/vals x) ())
       :any (p/error "vals: no impl for " x))
 
     (g/generic
       idxs
       [x]
+      :coll (range (count x))
       :map (c/or (c/keys x) ())
       :set (iter x)
-      :coll (range (count x))
       :any (p/error "idxs: no impl for " x))
 
     (g/generic nth
