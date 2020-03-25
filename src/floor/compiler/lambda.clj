@@ -37,7 +37,6 @@
                  (interleave (map :pat xs) (repeat "\n")))))
 
 (defn parse [[fst & nxt :as form]]
-  (println "form " form)
   (let [[name fst & nxt]
         (if (symbol? fst)
           (cons fst nxt)

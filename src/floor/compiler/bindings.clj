@@ -6,8 +6,8 @@
             [floor.compiler.env :as exp]))
 
 (g/generic bindings
-         ([x options])
-         ([x y options] [x y]))
+           ([x options])
+           ([x y options] [x y]))
 
 (do :vec
 
@@ -187,14 +187,28 @@
         (recur (conj ret a b) (conj seen a) nxt))
       ret)))
 
-(defn optimize [env bs]
+(defn optimize_OLD [env bs]
   (reduce
     (fn [{:keys [bindings env]} [sym expr]]
-      (if (symbol? expr)
+      (if (and (symbol? expr)
+               (not (contains? (set (take-nth 2 bindings)) sym)))
         {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr})}
         {:bindings (p/catv bindings [sym (exp/expand env expr)]) :env env}))
     {:env env :bindings []}
     (partition 2 bs)))
+
+(defn optimize
+  ([{:as ret :keys [todo bindings env]}]
+   (if (not (seq todo))
+     ret
+     (optimize
+       (let [[sym expr & todo] todo]
+         (if (and (symbol? expr)
+                  (not (contains? (set (take-nth 2 todo)) expr)))
+           {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr}) :todo todo}
+           {:bindings (p/catv bindings [sym (exp/expand env expr)]) :env env :todo todo})))))
+  ([env bs]
+   (optimize {:todo bs :env env :bindings []})))
 
 #_(optimize {} '[a b c a])
 

@@ -7,12 +7,12 @@
 (def global-env
   (atom
     {'floor.core
-     {'cs (exp/cs-mk2 {})
-      'csu (exp/cs-mk2 {:unified true})
-      '?cs (exp/cs-mk2 {:binding-mode :opt})
-      '!cs (exp/cs-mk2 {:binding-mode :strict})
-      '?csu (exp/cs-mk2 {:binding-mode :opt :unified true})
-      '!csu (exp/cs-mk2 {:binding-mode :strict :unified true})
+     {'cs (exp/cs-mk {})
+      'csu (exp/cs-mk {:unified true})
+      '?cs (exp/cs-mk {:binding-mode :opt})
+      '!cs (exp/cs-mk {:binding-mode :strict})
+      '?csu (exp/cs-mk {:binding-mode :opt :unified true})
+      '!csu (exp/cs-mk {:binding-mode :strict :unified true})
 
       'let (exp/let-mk 'floor.core/cs)
       '?let (exp/let-mk 'floor.core/!cs)

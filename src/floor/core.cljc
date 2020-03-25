@@ -1,7 +1,7 @@
 (ns floor.core
   (:refer-clojure
     :exclude
-    [let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
+    [not let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
   (:require [clojure.core :as c]
             [boot.generics :as g]
             [boot.named :as n]
@@ -19,7 +19,7 @@
 
     (def failure0 (failure ::failure))
     (defn failure? [x] (g/implements? x fail))
-    (defn success? [x] (not (failure? x))))
+    (defn success? [x] (c/not (failure? x))))
 
 (do :importation
 
@@ -54,7 +54,7 @@
           future? zero? simple-keyword? not-every? class? neg-int? sorted? nil? bytes? record? identical?
           ident? qualified-ident? true? integer? special-symbol? ratio? delay? ifn? nat-int? chunked-seq?
           distinct? pos-int? odd? uuid? false? list? simple-ident? rational? number? not-any? qualified-symbol?
-          seqable? symbol? coll? not
+          seqable? symbol? coll?
           = > >= < <=]))
 
     (defn not [x]
@@ -72,7 +72,7 @@
         {}
         '[next seq]))
 
-    (p/pp core-predicates)
+    #_(p/pp core-predicates)
 
     (p/defmac import-core-stuff
       []
@@ -86,6 +86,7 @@
     (def eq =) (def neq not=)
     (def gt >) (def gte >=)
     (def lt <) (def lte <=)
+    (def add c/+) (def sub c/-) (def mul c/*) (def div c//)
 
     ;; we will create a bunch of things based on the type registry
     ;; for each type
@@ -140,8 +141,8 @@
     (g/generic
       pure?
       [x]
-      :lst (when-not (c/seq x) ())
-      (when (c/= x (pure x)) x))
+      :lst (if-not (c/seq x) () (failure {:not-pure x}))
+      (cs (eq x (pure x)) x (failure {:not-pure x})))
 
     (g/reduction
       sip [a b]
@@ -265,6 +266,8 @@
     (defiterg butlast [x] (c/butlast x))
     (defiterg cdr [x] (c/rest x))
     (defiterg rev [x] (c/reverse x))
+
+    #_(macroexpand '(floor.core/let [a__16857__auto__ x x (floor.core/iter x)] (floor.core/wrap* a__16857__auto__ (c/rest x))))
 
     ;selection from index to index
     (defiterg section [x from to]

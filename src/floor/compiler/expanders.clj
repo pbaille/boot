@@ -21,37 +21,7 @@
 
 ;; conditional bindings
 
-(defn cs-compile-case [env bs expr options]
-  (let [bs (bindings/bindings bs options)
-        bs (if (:unified options) (bindings/unified bs) bs)
-        {:keys [env bindings]} (bindings/optimize env bs)
-        expr (env/expand env expr)]
-    (if-not (seq bindings)
-      expr
-      (loop [ret expr
-             [[p1 e1] & pes :as bs]
-             (reverse (partition 2 bindings))]
-        (if-not (seq bs)
-          ret
-          (recur `(let [~p1 ~e1] (if (floor.core/success? ~p1) ~ret ~p1))
-                 pes))))))
-
-(defn cs-mk [options]
-  {:expand (fn cs-expand
-             [env [verb b1 e1 & more :as form]]
-             (let [exp (partial env/expand env)]
-               (condp = (count form)
-                 1 nil
-                 2 (exp b1) #_(cs-wrap-return (exp b1) options)
-                 3 (cond
-                     (not (vector? b1)) (if-expand env [b1 e1])
-                     :else (cs-compile-case env b1 e1 options))
-                 ;else
-                 `(let [a# ~(cs-expand env [verb b1 e1])]
-                    (if (floor.core/success? a#)
-                      a# ~(cs-expand env (cons verb more)))))))})
-
-(defn cs-compile-case2 [env bs expr else options]
+(defn cs-compile-case [env bs expr else options]
   (let [bs (bindings/bindings bs options)
         bs (if (:unified options) (bindings/unified bs) bs)
         {:keys [env bindings]} (bindings/optimize env bs)
@@ -67,7 +37,7 @@
           (recur `(let [~p1 ~e1] (if (floor.core/success? ~p1) ~ret ~p1))
                  pes))))))
 
-(defn cs-mk2 [options]
+(defn cs-mk [options]
   {:expand (fn cs-expand
              [env [verb b1 e1 & more :as form]]
              (cond
@@ -77,7 +47,7 @@
                (not (next more))
                (if (not (vector? b1))
                  (if-expand env [b1 {::cs-return e1} (first more)])
-                 (cs-compile-case2 env b1 {::cs-return e1} (first more) options))
+                 (cs-compile-case env b1 {::cs-return e1} (first more) options))
 
                :else
                (cs-expand env [verb b1 e1 (cs-expand env (cons verb more))])))})
@@ -86,7 +56,6 @@
 
 (defn let-mk [binding-form]
   {:expand (fn [env form]
-             (println "expanding let" (list binding-form (second form) (list* 'do (drop 2 form))))
              (env/expand env (list binding-form (second form) (list* 'do (drop 2 form)))))})
 
 ;; lambdas and friends
@@ -140,7 +109,7 @@
   {:expand (fn [env [_ seed & cases]]
              (env/expand env (case-expand {:cases cases :seed seed :binding-form binding-form})))})
 
-((:expand (cs-mk2 {})) {}
+((:expand (cs-mk {})) {}
  '(cs [a 1] a [b 2] b))
 
 ((:expand (lambda-mk 'floor.core/cs)) {}
@@ -149,5 +118,5 @@
 ((:expand (lambda-definition 'floor.core/cs)) {}
  '(deff iop [a] a))
 
-((:expand (cs-mk2 {})) {}
+((:expand (cs-mk {})) {}
  '(cs [a G__7272] a))
