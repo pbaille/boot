@@ -3,7 +3,7 @@
             [boot.prelude :as p :refer [cs]]
             [boot.generics :as g]
             [floor.compiler.composite :as compo]
-            [floor.compiler.env :as exp]))
+            [floor.compiler.env :as env]))
 
 (g/generic bindings
            ([x options])
@@ -200,7 +200,7 @@
       (if (and (symbol? expr)
                (not (contains? (set (take-nth 2 bindings)) sym)))
         {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr})}
-        {:bindings (p/catv bindings [sym (exp/expand env expr)]) :env env}))
+        {:bindings (p/catv bindings [sym (env/expand env expr)]) :env env}))
     {:env env :bindings []}
     (partition 2 bs)))
 
@@ -213,7 +213,7 @@
          (if (and (symbol? expr)
                   (not (contains? (set (take-nth 2 todo)) expr)))
            {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr}) :todo todo}
-           {:bindings (p/catv bindings [sym (exp/expand env expr)]) :env env :todo todo})))))
+           {:bindings (p/catv bindings [sym (env/expand env expr)]) :env (env/env-shadow env sym) :todo todo})))))
   ([env bs]
    (optimize {:todo bs :env env :bindings []})))
 

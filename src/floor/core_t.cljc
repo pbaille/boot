@@ -339,10 +339,9 @@
     (throws
       (let [!a (pos? -1)] :never))
 
+    ;; TODO opt bindings are not holding failure therefore does not work in or... smells bad
     #_(is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
-        1)
-
-
+          1)
 
     (is (lut [a 1 a 1] (add a a))
         2)
@@ -357,6 +356,51 @@
     (is :catched
         (try (!lut [a 1 a (inc a)] :never)
              (catch Exception _ :catched)))
+
+    (is (cs [x (pos? -1)] {:pos x}
+            [x (neg? -1)] {:neg x})
+        {:neg -1})
+
+    :simple2
+    "each binding block can have several cases"
+    (let [f (c/fn [seed]
+              (cs [x (num? seed) x++ (inc x)] x++
+                  [x (str? seed) xbang (+ x "!")] xbang))]
+         (is (f 1))
+         (is "yo!" (f "yo"))
+         (is (failure? (f :pop))))
+
+    :default-case
+    (is (cs [x (pos? 0) n (p/error "never touched")] :pos
+            [x (neg? 0) n (p/error "never touched")] :neg
+            :nomatch)
+        :nomatch)
+
+    :strict-throws
+    (throws
+      (!cs [x (pos? 0)] :pos
+           [x (neg? 0)] :neg))
+
+
+    :clut-simple
+    "unfied version of cs"
+    (let [f (f [seed]
+               (csu [[a a] seed] :eq
+                    [[a b] seed] :neq))]
+         (is :eq (f [1 1]))
+         (is :neq (f [1 2])))
+
+    :!clut-throws
+    (let [x [:tup [1 2]]]
+         (throws
+           (!csu [[:wat a] x] :nop
+                 [(:vec vx) x [:tup [a a]] vx] :yep)))
+
+    (let [p [:point 0 2]]
+         (cs [[:point x 0] p] :y0
+             [[:point 0 y] p] :x0
+             [[:point x y] p] [x y]))
+
     )
 
 

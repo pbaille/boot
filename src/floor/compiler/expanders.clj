@@ -1,7 +1,8 @@
 (ns floor.compiler.expanders
   (:require [floor.compiler.env :as env]
             [floor.compiler.bindings :as bindings]
-            [floor.compiler.lambda :as lambda]))
+            [floor.compiler.lambda :as lambda]
+            [boot.prelude :as p]))
 
 (defn if-form
   ([test then]
