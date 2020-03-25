@@ -331,27 +331,19 @@
 
     (is 1 (?let [a (failure 0) b 1] b))
 
-    :accumulate-bindings
     (is (?let [a 1 b a] (add a b))
         2)
 
-    :guards
-    "with guards ?let make sense"
     (is (failure? (let [(pos? a) -1] (p/error "never touched"))))
 
-    :bang-prefix
-    "in ?let ! behaves the same as in let"
     (throws
       (let [!a (pos? -1)] :never))
 
-    :underscore-prefix
-    "if you want to allow some binding to be nil in a ?let form use the _ prefix"
-    (is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
+    #_(is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
         1)
 
 
 
-    :lut
     (is (lut [a 1 a 1] (add a a))
         2)
 
@@ -368,36 +360,36 @@
     )
 
 
-(do :bench
+(comment :bench
 
-    (defmacro qb
-      ([e] `(qb 100000 ~e))
-      ([n e]
-       `(time (dotimes [_# ~n] ~e))))
-
-
-    (qb (cs [a 1 b a] (add a b)))
-    (qb (csu [a 1 a 1] (add a a)))
-    (qb (c/let [a 1 b a] (add a b)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) #:floor.compiler.expanders{:cs-return (add a a)} a))]
-        (if (floor.core/success? G__17516) (clojure.core/get G__17516 :floor.compiler.expanders/cs-return) G__17516)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) (add a a) a))]
-        (if (floor.core/success? G__17516) G__17516 G__17516)))
-
-    (qb
-      (let*
-        [G__17516 (clojure.core/let [a 1] (if-not (instance? Failure a) (add a a) a))]
-        (if G__17516 G__17516 G__17516)))
-
-    (macroexpand '(g/implements? [] fail))
+         (defmacro qb
+           ([e] `(qb 100000 ~e))
+           ([n e]
+            `(time (dotimes [_# ~n] ~e))))
 
 
-    (time (dotimes [_ 100000] (g/implements? (failure 0) fail)))
-    (time (dotimes [_ 100000] (nil? nil)))
-    (time (dotimes [_ 100000] (c/let [a 1 b a] (add a b)))))
+         (qb (cs [a 1 b a] (add a b)))
+         (qb (csu [a 1 a 1] (add a a)))
+         (qb (c/let [a 1 b a] (add a b)))
+
+         (qb
+           (let*
+             [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) #:floor.compiler.expanders{:cs-return (add a a)} a))]
+             (if (floor.core/success? G__17516) (clojure.core/get G__17516 :floor.compiler.expanders/cs-return) G__17516)))
+
+         (qb
+           (let*
+             [G__17516 (clojure.core/let [a 1] (if (floor.core/success? a) (add a a) a))]
+             (if (floor.core/success? G__17516) G__17516 G__17516)))
+
+         (qb
+           (let*
+             [G__17516 (clojure.core/let [a 1] (if-not (instance? Failure a) (add a a) a))]
+             (if G__17516 G__17516 G__17516)))
+
+         (macroexpand '(g/implements? [] fail))
+
+
+         (time (dotimes [_ 100000] (g/implements? (failure 0) fail)))
+         (time (dotimes [_ 100000] (nil? nil)))
+         (time (dotimes [_ 100000] (c/let [a 1 b a] (add a b)))))
