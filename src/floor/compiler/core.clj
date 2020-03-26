@@ -55,6 +55,9 @@
 
 (comment :scratch
 
+         (env/expand @global-env '(floor.core/and ((car checkers) y)
+                                           (recur (cdr checkers))))
+
          (env/expand {} '(let ~(vec (interleave '[a b] [1 2])) (+ a b)))
 
          (env/expand @global-env

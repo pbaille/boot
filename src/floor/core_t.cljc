@@ -26,8 +26,6 @@
   (let [?a (failure 0)] a)
   )
 
-(or (failure 1) (failure 2))
-
 (do :control
 
     (is 1 (cs [a 1] a))
@@ -340,7 +338,7 @@
       (let [!a (pos? -1)] :never))
 
     (is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
-          1)
+        1)
 
     (is (lut [a 1 a 1] (add a a))
         2)
@@ -360,8 +358,6 @@
             [x (neg? -1)] {:neg x})
         {:neg -1})
 
-    :simple2
-    "each binding block can have several cases"
     (let [f (c/fn [seed]
               (cs [x (num? seed) x++ (inc x)] x++
                   [x (str? seed) xbang (+ x "!")] xbang))]
@@ -369,27 +365,21 @@
          (is "yo!" (f "yo"))
          (is (failure? (f :pop))))
 
-    :default-case
     (is (cs [x (pos? 0) n (p/error "never touched")] :pos
             [x (neg? 0) n (p/error "never touched")] :neg
             :nomatch)
         :nomatch)
 
-    :strict-throws
     (throws
       (!cs [x (pos? 0)] :pos
            [x (neg? 0)] :neg))
 
-
-    :clut-simple
-    "unfied version of cs"
     (let [f (f [seed]
                (csu [[a a] seed] :eq
                     [[a b] seed] :neq))]
          (is :eq (f [1 1]))
          (is :neq (f [1 2])))
 
-    :!clut-throws
     (let [x [:tup [1 2]]]
          (throws
            (!csu [[:wat a] x] :nop
@@ -402,6 +392,185 @@
 
     )
 
+(do :check-tests
+
+    (is true (check 1 pos?))
+    (is true (check [0 1 2] 2))
+    (is (failure? (check [0 1 2] 3)))
+    (is true
+        (check {:a 1} [:a pos?]))
+    (is true
+        (check {:a 1 :b {:c -1 :d 0}}
+               [:a pos?]
+               [:b :c neg?]))
+    (is (failure? (check {:a 1} (car {:a neg?}))))
+    (is true (check {:a 1} (car {:a pos?})))
+    (is true
+        (check {:a 1 :b -1}
+               {:a pos?
+                :b neg?}))
+    (is (check 0 [number? zero?]))
+    (is true
+        (check {:a 1 :b {:c -1 :d 0}}
+               {:a pos?
+                :b {:c neg? :d [number? zero?]}
+                }))
+
+    (is (failure?
+          (check {:a 1 :b {:c -1 :d 0}}
+                 {:a pos?
+                  :b {:c neg? :d string?}
+                  }))))
+
+(do :get-tests
+
+    (is 0
+        (get 0 zero?)
+        (get 0 [number? zero?])
+        (get {:a 0} :a)
+        (get {:a 0} [:a zero?])
+        (get {:a {:b 0}} [:a :b])
+        (get {:a {:b 0}} [:a :b zero?]))
+
+    (is 1
+        (get [1] 0) ;; getting an index
+        (get [{:a 1}] [0 :a number?]))
+
+    (is {:count 10, :sum 45}
+        (get (range 10)
+             {:count count
+              :sum (partial apply +)}))
+
+    (is 9/2
+        (get (range 10)
+             ;; using map as a getter is building a map structure where
+             ;; each key contains the result of its val as a getter applied to the given seed
+             {:count count
+              :sum (partial apply +)}
+             (p/fk [count sum]
+                   (/ sum count)))))
+
+(do :keyword-lenses
+    (is 1 (get {:a 1} :a))
+    (is (failure? (get {:a 1} :b)))
+    (is {:a 2} (upd {:a 1} :a inc))
+    (is {:a 1 :b 1} (upd {:a 0 :b 2} :a inc :b dec)))
+
+(do :indexes-leses
+    (is 2 (get [1 2 3] 1))
+    (is [1 3 3] (upd [1 2 3] 1 inc))
+    (is [2 2 2] (upd [1 2 3] 0 inc 2 dec))
+    (is [1 2 [4 4]]
+        (upd [1 2 [3 4]] [2 0] inc)))
+
+(do :composition
+    ;; vector denotes composition (left to right)
+    (is 1 (get {:a {:b 1}} [:a :b]))
+    (is 3 (get {:a {:b [1 2 3]}} [:a :b 2]))
+    (is {:a {:b 2}} (upd {:a {:b 1}} [:a :b] inc))
+    (is {:a {:b 2 :c 1}}
+        (upd {:a {:b 1 :c 2}}
+             [:a :b] inc
+             [:a :c] dec))
+
+    (is {:a 3, :c {:d 3}}
+        (upd {:a 1 :c {:d 2}}
+             :a (f [x] (add x x x))
+             [:c :d] inc)))
+
+
+(do :functions
+    (is 1 (get 1 pos?))
+    (is (failure? (get 1 neg?)))
+    (is {:a 0} (upd {:a 1} [:a pos?] dec))
+    (is (failure? (upd {:a 0} [:a pos?] dec))))
+
+(do :branching
+
+    (is (zero? (upd< 1
+                     neg? inc
+                     pos? dec)))
+    (is {:a 0}
+
+        (upd< {:a 1}
+              [:a pos?] dec
+              [:a neg?] inc)
+
+        (upd< {:a -1}
+              [:a pos?] dec
+              [:a neg?] inc))
+
+    (is {:a {:b 2, :c -1}}
+        (upd {:a {:b 1 :c -1}}
+             ((:< lenses)
+              [:a :c pos?] ;; branching lens
+              [:a :b pos?])
+             inc)))
+
+(do :option
+    (is {:a {:b 1}}
+        (upd {:a {:b 1}}
+             ((:? lenses) [:a :z :b]) ;; if points to something perform the transformation, else return data unchanged
+             inc))
+
+    (is {:a {:b 2}}
+        (upd {:a {:b 1}}
+             ((:? lenses) [:a :b])
+             inc)))
+
+(do :non-existant-keys
+
+    (is {:a {:b {:c 42}}}
+        (upd {} ((:path lenses) [:a :b :c]) (constantly 42)))
+
+    (is {:a {:b {:c 42}}}
+        (put {} ((:path lenses) :a :b :c) 42) ;; put is a thin wrapper around 'mut, it simply wrap the transformation in a constantly call
+        (put {} ((:path lenses) [:a :b :c]) 42)
+        (put {} ((:path lenses) :a [:b :c]) 42)
+        (upd {} ((:path lenses) [:a :b] :c) (constantly 42)))
+
+    (is {:b 1}
+        (upd {} ((:path lenses) :b) (fnil inc 0))))
+
+(do :matching-values
+    (is "io"
+        (get {:a "io"} [:a "io"]))
+
+    (is (failure? (get {:a "io"} [:a "iop"])))
+
+    ;; if you want to match an integer (else it would be interpreted as an index lens)
+    (is 2 (get [2] [0 ((:eq lenses) 2)]))
+    )
+
+(do :pass-tests
+    ;; the pass lens can be used as a validation mecanism
+    (is ((:pass lenses)
+          {:a 1 :b "io" :p 1}
+          [:a number? pos?]
+          [:b string?])
+        {:a 1
+         :b "io"
+         :p 1})
+
+    ;; coercion
+    (is ((:pass lenses)
+          {:a 1 :b "io" :p 1}
+          [:a number? pos? inc]
+          [:b string?])
+        {:a 2 ;; :a has been coerced
+         :b "io"
+         :p 1})
+
+    )
+
+(do :misc
+
+    ;; convertion
+    (is (div 11 10)
+        (upd 1 ((:convertion lenses)
+                #(mul % 10)
+                #(div % 10))
+             inc)))
 
 (comment :bench
 

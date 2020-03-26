@@ -1,7 +1,7 @@
 (ns floor.core
   (:refer-clojure
     :exclude
-    [not let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
+    [get not let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
   (:require [clojure.core :as c]
             [boot.generics :as g]
             [boot.named :as n]
@@ -55,10 +55,8 @@
           = > >= < <=]))
 
     (defn not [x]
-        (cond
-          (c/contains? #{false nil} x) x
-          (failure? x) true
-          :else (failure ::not-failure)))
+      (if (c/contains? #{false nil} x)
+        x (failure ::not-failure)))
 
     (def core-guards
 
@@ -105,8 +103,8 @@
                       (let [cast-sym (p/sym '-> k)]
                            `(do
                               (g/generic ~(p/sym k "?") [~'x]
-                                    ~@(if (prims k) [k 'x] (c/interleave xs (c/repeat 'x)))
-                                    :any (failure {:typecheck ~k :isnt ~'x}))
+                                         ~@(if (prims k) [k 'x] (c/interleave xs (c/repeat 'x)))
+                                         :any (failure {:typecheck ~k :isnt ~'x}))
                               (g/generic ~cast-sym [~'x] ~k ~'x)
                               (defn ~(p/sym cast-sym "?") [x#]
                                 (c/or (g/implements? x# ~cast-sym)
@@ -136,6 +134,7 @@
       pure?
       [x]
       :lst (if-not (c/seq x) () (failure {:not-pure x}))
+      :nil nil
       (cs (eq x (pure x)) x (failure {:not-pure x})))
 
     (g/reduction
@@ -283,8 +282,8 @@
            (+ (pure cdr) cars cdr)))
 
     (defn cons? [x]
-      (cs (c/and (g/implements? x iter)
-                 (not (pure? x)))
+      (if (c/and (g/implements? x iter)
+                 (failure? (pure? x)))
           x
           (failure {:not-cons x})))
 
@@ -292,7 +291,7 @@
 
     (g/type+
       :vec
-      (last [x] (get x (dec (count x))))
+      (last [x] (c/get x (dec (count x))))
       (nth [x i not-found] (c/get x i not-found))
       (take [x n] (subvec x 0 (min (count x) n)))
       (drop [x n] (subvec x (min (count x) n)))
@@ -305,9 +304,9 @@
 (do :callables
 
     (g/generic application
-             [x]
-             :fun (c/partial apply x)
-             (c/partial apply (->fun x)))
+               [x]
+               :fun (c/partial apply x)
+               (c/partial apply (->fun x)))
 
     (defmacro def-callable
       [name builder]
@@ -446,6 +445,429 @@
 
     )
 
+(do :getters-and-friends
+    ;; declarations
+    ;; ------------------------------------------------------------------------------
+
+    (g/generic form [x] x)
+
+    (g/generic getter [x] (p/error "no getter impl for " x))
+    (g/generic updater [x] (p/error "no updater impl for " x))
+    (g/generic swaper [x] (p/error "no swaper impl for " x))
+    (g/generic checker [x] (p/error "no checker impl for " x))
+
+    (g/generic rget [x y] ((getter x) y))
+    (g/generic rupd [x y f] ((updater x) y f))
+    (g/generic rswap [x y] ((swaper x) y))
+    (g/generic rcheck [x y] ((checker x) y))
+
+    ;; core
+    ;; ------------------------------------------------------------------------------
+
+    (p/defn+ check
+             ([x y] (rcheck y x))
+             ([x y & ys] (and (rcheck y x) (check* x ys))))
+
+    (p/defn+ get
+             ([x y] (rget y x))
+             ([x y & ys] (reduce get (rget y x) ys)))
+
+    (p/defn+ swap
+             ([x y] (rswap y x))
+             ([x y & ys] (reduce swap (rswap y x) ys)))
+
+    (p/defn+ upd
+             ([x y f] (rupd y x (swaper f)))
+             ([x y f & others] (reduce upd* (rupd y x f) (partition 2 others))))
+
+    ;; extras
+    ;; ------------------------------------------------------------------------------
+
+    (p/defn+ put
+             ([x l v]
+              (upd x l (constantly v)))
+             ([x l v & lvs]
+              (reduce put*
+                      (upd x l v)
+                      (partition 2 lvs))))
+
+    (p/defn+ upd<
+             "takes a datastructure to transform (x)
+              and series of couples of form [lens(able) fn]
+              executing the first transformation which associated lens does not focuses on nil"
+             ([x couples]
+              (when (seq couples)
+                (or
+                  (and
+                    (get x (ffirst couples))
+                    (upd* x (first couples)))
+                  (upd< x (next couples)))))
+             ([x l f & lfs]
+              (upd< x (cons [l f] (partition 2 lfs)))))
+
+    ;; impls
+    ;; ------------------------------------------------------------------------------
+
+    (g/generic+ checker
+
+                [x]
+
+                :nil
+                (constantly true)
+
+                #{:num :key}
+                (f [y] (and (contains? y x) true))
+
+                :vec
+                (let [get (getter x)]
+                     (f [y] (and (get y) true)))
+                #_(let [cs (seq (map checker x))]
+                       (fn [y]
+                           (loop [cs cs]
+                             (if-not cs true (and ((first cs) y)
+                                                  (recur (next cs)))))))
+
+                :link
+                (let [get (getter (c/key x))
+                      check (checker (c/val x))]
+                     (f [y]
+                        (let [v (get y)]
+                             (check v))))
+
+                :map
+                #_(checker (into [] x))
+                (let [checkers ($ (iter x) checker)]
+                     (f [y]
+                        (loop [checkers checkers]
+                          (cs (pure? checkers)
+                              true
+                              (and ((car checkers) y)
+                                   (recur (cdr checkers)))))))
+
+                :fun
+                (f [y] (and (x y) true))
+
+                :any
+                (f [y] (and (eq x y) true)))
+
+    (do :impl
+
+        (defn vec->swaper [v]
+          (let [ts (c/map swaper v)]
+               (f [y] (c/reduce #(%2 %1) y ts))))
+
+        (defn link->swaper [e]
+          (f [x]
+             (upd x
+                  (c/key e)
+                  #(swap % (c/val e)))))
+
+        (defn map->swaper [m]
+          (vec->swaper (mapv link->swaper m))))
+
+    (g/generic+ swaper
+                [x]
+                :nil c/identity
+                :fun x
+                :map (map->swaper x)
+                :vec (vec->swaper x)
+                :link (link->swaper x)
+                :any (c/constantly x))
+
+    (macroexpand-1 '(g/thing (rswap [x y] :swap!)
+                             (rget [x y] :get!)))
+
+    (g/generic+ getter
+                [x]
+
+                :nil
+                identity
+
+                :fun x
+                #_(let [f (or (c/core-guards x) x)]
+                       (fn [y] (f y)))
+
+                #{:num :key}
+                (f [y] (c/get y x (failure [::get x y])))
+
+                :vec
+                (let [getters ($ x getter)]
+                     (f [y]
+
+                        (loop [y y getters getters]
+                          (cs (pure? getters) y
+                              [y ((car getters) y)]
+                              (recur y (cdr getters))))))
+
+                :map
+                (let [m ($ x getter)]
+                     (f [y]
+                        #_(loop [{} ret m (seq m)]
+                            (if-not m
+                              ret
+                              (c/let? [[k v] (first m)
+                                       y' (v y)]
+                                      (recur (assoc ret k y') (next m)))))
+                        (reduce (f [a e]
+                                   (cs [v ((c/val e) y)]
+                                       (assoc a (c/key e) v)
+                                       (reduced (failure [::get x y]))))
+                                {} m)))
+
+                :any
+                (getter (c/partial eq x)))
+
+    #_(defn lens+
+        "lens composition, don't use directly
+         prefer passing a vector to the 'lens function"
+        [l m]
+        (fn [x f]
+            (c/let? [v1 (get x l)
+                     v2 (mut v1 m f)]
+                    (put x l v2))))
+
+    (do :lenses
+
+        (defn lens
+          ([x]
+           (lens (getter x)
+                 (updater x)
+                 (list 'lens x)))
+          ([get upd & [form']]
+           (g/thing
+             (getter [x] (f [y] (get y)))
+             (updater [x] (f [y f] (upd y f)))
+             (form [_] form'))))
+
+        (defn lens+
+          "lens composition, don't use directly
+           prefer passing a vector to the 'lens function"
+          [l m]
+          (lens (f [x]
+                   (cs [lx (get x l)
+                        lm (get lx m)] lm))
+                (f [x f]
+                   ;; the idea here is to shortcircuit when encountering an intermediate nil result
+                   (cs [v1 (get x l)
+                        v2 (upd v1 m f)]
+                       (put x l v2)))))
+
+        (declare lenses)
+
+        (def lenses
+
+          {:k
+           (lens identity (f [x _] x))
+
+           :id
+           (lens identity (f [x f] (f x)))
+
+           :prob
+           (lens (c/partial p/prob 'get)
+                 (f [x f] (p/prob 'set (f x))))
+
+           :never
+           (lens (constantly (failure :never-lens-get))
+                 (constantly (failure :never-lens-set)))
+
+           :<
+           (f
+             "fork lens, tries every given lens(able) in order
+              use the first that does not focuses on nil"
+             [. xs]
+             (let [lenses ($ xs lens)]
+                  (lens
+                    (f [x]
+                       (loop [ls lenses]
+                         (cs (pure? ls) (failure :fork-lens-failure)
+                             [ret (get x (car ls))]
+                             ret (recur (cdr ls)))))
+                    (f [x f]
+                       (loop [ls lenses]
+                         (cs (pure? ls) (failure :fork-lens-failure)
+                             (get x (car ls)) (upd x (first ls) f)
+                             (recur (cdr ls))))))))
+
+           :path
+           (f path
+              "a lens representing deep access/update in a map (with keyword keys)
+               unlike regular lens composition it does not return nil if the path points to nil
+               this way it can be used to introduce new values in a map (unlike lens composition, that would have failed (returning nil))"
+              [. xs]
+              (let [ks (flatten xs)]
+                   (c/assert (every? keyword? ks) "path should only contains keywords")
+                   (lens (f [x] (c/get-in x ks (failure [:path-lens-get x ks])))
+                         (f [x f] (c/update-in x ks f)))))
+
+           :?
+           (f
+             "build a lens that when focuses on nil, returns the state unchanged, or behave normally"
+             [l] ((:< lenses) (lens l) (:k lenses)))
+
+           :!
+           (f
+             "a lens that that returns nil when focuses on nil"
+             [l] ((:< lenses) (lens l) (:never lenses)))
+
+           :convertion
+           (f
+             "Given a function from A to B and another in the
+              opposite direction, construct a lens that focuses and updates
+              a converted value."
+             [one->other other->one]
+             (lens one->other
+                   (f [s f]
+                      (other->one (f (one->other s))))))
+
+           :eq
+           (f [x]
+              (lens (f [y] (eq y x))
+                    (f [y f] (cs (eq x y) (f y)))))
+
+           :pass
+           (f pass
+              "take a datastructure and a series of lenses
+               try to forward x thru all given lenses
+               can be used to do validation and coercion (with the help of 'lfn)"
+              [x . xs]
+              (cs (cons? xs)
+                  (cs [x' (upd x (car xs) identity)]
+                      (* pass x' (cdr xs)))
+                  x))}))
+
+    (g/generic+ updater
+                [x]
+
+                :nil
+                (f [x f] (f x))
+
+                #{:num :key}
+                (let [get (getter x)]
+                     (f [y f]
+                        (cs (get y)
+                            (c/update y x f))))
+                :vec
+                (updater
+                  (reduce lens+ (c/map lens x)))
+
+                :fun
+                (let [get (getter x)]
+                     (f [y f] (cs [y' (get y)] (f y'))))
+
+
+                :map
+                (let [get (getter x)]
+                     (f [y f] (cs [z (get y)] (f z))))
+
+                :any
+                (updater (partial eq x))))
+
+
+
+(comment
+  (defmacro lazy-cast [pat & body]
+    `(let [ret# (atom nil)]
+          (f [x#]
+             (or @ret#
+                 (let [~pat x#]
+                      (reset! ret# (do ~@body)))))))
+
+  (let [f (lazy-cast x (println "casted " x) (str x))]
+       [(f 1) (f [1 2])]))
+
+(comment
+  :comparing-perfs-between-reify-and-records-construction
+  (defprotocol P1 (iop [x]))
+  (defprotocol P2 (pop [x]))
+  (defn p1 [iop-impl] (reify P1 (iop [x] (iop-impl x))))
+  (defrecord R1 [x] P1 (iop [_] x))
+  (defrecord R2 [iop-impl] P1 (iop [x] (iop-impl x)))
+
+  ;; record construction is slightly faster
+  (time (dotimes [_ 100000] (p1 1)))
+  (time (dotimes [_ 100000] (R1. 1)))
+
+  (let [x (R2. identity)
+        y (p1 identity)]
+       #_(time (dotimes [_ 100000] (iop x)))
+       (time (dotimes [_ 100000] (iop y))))
+
+  ;; get a glance of perf impact when introducing a failure value for control flow
+  (time (dotimes [_ 100000] (let [x (rand-nth [nil true false])] (when-not (nil? x) x))))
+  (time (dotimes [_ 100000] (let [x (rand-nth [nil true ::fail])] (when-not (core/= ::fail x) x))))
+  (time (dotimes [_ 100000] (let [x (rand-nth [nil true false])] (when-not x x)))))
+
+
+
+;; fn sketxh
+
+(comment
+
+  (fn inc0
+      (:num a) ;; seq denotes arity 1 , keywords denotes type
+      (inc a))
+
+  ;; should be expanded to
+  '(fn inc0
+       (get a num?) ;; the type keyword is replaced by the corresponding type predicate
+       (inc a))
+
+  (is 2 (inc0 1))
+
+  ;or
+
+  '(fn inc0
+       (t a :num) ;; maybe this is better and leaves keyword to contains check
+       (inc a))
+
+  ;; function taking several positional arguments
+  (fn add1 :num ;; optional return spec
+      [(:num a) (:num b)]
+      (+ a b))
+
+  (is 3
+      (add1 [1 2])
+      (add1 1 2))
+
+  ;; function taking a map
+  (fn add2
+      {a :num
+       b [number? neg?]} (+ a b))
+
+  (is 3
+      (add2 {:a 1 :b 2})
+      (add2 :a 1 :b 2))
+
+  ;; case function
+  (fn add3 :num
+      [(:num a)] a ;; can i strip this literal vec ?
+      [(:num a) (:num b)] (+ a b)
+      [a b & c] (reduce add3 (add3 a b) c))
+
+  (is 10
+      (add3 5 5)
+      (add3 5 3 2)
+      (add3 5 3 1 1))
+
+  (fn pos-int
+      ([int? pos?] a) a) ;; anything implementing get is a valid spec
+
+  (fn pouet
+      (I a do-stuff) (do-stuff a)) ;; a has to implement do-stuff
+
+  (fn pouet
+      (I a [do-stuff greet]) (do-stuff a)) ;; a has to implement do-stuff and greet (vector is optional)
+
+  ;; maybe we should implement let first
+
+  (let [(:num a) x] a)
+
+  ;; then fn expansion use this let form
+  (fn inc0 [x]
+      (let [(:num a) x]
+           (inc a)))
+
+  )
 
 (comment
 
@@ -465,10 +887,10 @@
   (g/generic idxs [x])
 
   ;;
-  (g/generic getter [x] (u/error "no getter impl for " x))
-  (g/generic updater [x] (u/error "no updater impl for " x))
-  (g/generic swaper [x] (u/error "no swaper impl for " x))
-  (g/generic checker [x] (u/error "no checker impl for " x))
+  (g/generic getter [x] (p/error "no getter impl for " x))
+  (g/generic updater [x] (p/error "no updater impl for " x))
+  (g/generic swaper [x] (p/error "no swaper impl for " x))
+  (g/generic checker [x] (p/error "no checker impl for " x))
 
   (g/generic rget [x y] ((getter x) y))
   (g/generic rupd [x y f] ((updater x) y f))

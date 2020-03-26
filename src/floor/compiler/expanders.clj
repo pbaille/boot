@@ -118,13 +118,18 @@
   (expander self [env [v & xs]]
             (let [retsym (gensym)]
               (if xs
-                `(let [~retsym ~(env/expand env (first xs))]
-                   (if (floor.core/success? ~retsym)
-                     ~(if (next xs)
-                        (self env (list* v (next xs)))
-                        retsym)
-                     ~retsym))
+                (if (next xs)
+                  `(let [~retsym ~(env/expand env (first xs))]
+                     (if (floor.core/success? ~retsym)
+                       ~(self env (list* v (next xs)))
+                       ~retsym))
+                  (env/expand env (first xs)))
                 true))))
+
+((:expand AND) {} '(and ((car checkers) y)
+                        (recur (cdr checkers))))
+
+
 
 (comment
 

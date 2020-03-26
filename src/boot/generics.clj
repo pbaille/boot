@@ -20,6 +20,12 @@
 
 (do :state
 
+    ;; a way to compile lambda case diferently if needed
+    ;; used in 'with-compiled-cases if no overides given
+    ;; you probably should not worry about that
+    ;; currently only used in floor.core
+    (def lambda-case-compiler* (atom identity))
+
     (defn get-reg []
       (state/get :fns))
 
@@ -168,7 +174,7 @@
                     :name dispatch-name
                     :fullname (with-ns (or extension-ns ns) dispatch-name)
                     :compiled
-                    ((or lambda-case-compiler identity)
+                    ((or lambda-case-compiler @lambda-case-compiler*)
                      (list argv expr)))))
               (mapcat casemaps cases))))
 
