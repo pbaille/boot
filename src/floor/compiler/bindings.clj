@@ -177,47 +177,61 @@
                      options)
            (bindings pat (list* verb seed args) options))))}))
 
-(defn compile-binding-vector [xs & [options]]
-  (vec (mapcat (fn [[pat seed]]
-                 (bindings pat seed (or options {})))
-               (partition 2 xs))))
+(do :compilation
 
-(defn unified
-  "takes a binding vector (like let) , compile it with 'bindings
-   then add unification constraints on symbols that occurs multiple times"
-  [xs & [options]]
-  (loop [ret [] seen #{}
-         [a b & nxt] (compile-binding-vector xs)]
-    (if a
-      (if (seen a)
-        (recur (p/catv ret (bindings (gensym) `(floor.core/eq ~a ~b) options)) seen nxt)
-        (recur (conj ret a b) (conj seen a) nxt))
-      ret)))
+    (defn unified
+      "takes a binding vector (like let) , compile it with 'bindings
+       then add unification constraints on symbols that occurs multiple times"
+      [xs & [options]]
+      (loop [ret [] seen #{}
+             [a b & nxt] (bindings xs options)]
+        (if a
+          (if (seen a)
+            (recur (p/catv ret (bindings (gensym) `(floor.core/eq ~a ~b) options)) seen nxt)
+            (recur (conj ret a b) (conj seen a) nxt))
+          ret)))
 
-(defn optimize_OLD [env bs]
-  (reduce
-    (fn [{:keys [bindings env]} [sym expr]]
-      (if (and (symbol? expr)
-               (not (contains? (set (take-nth 2 bindings)) sym)))
-        {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr})}
-        {:bindings (p/catv bindings [sym (env/expand env expr)]) :env env}))
-    {:env env :bindings []}
-    (partition 2 bs)))
+    (defn optimize
+      ([{:as ret :keys [todo bindings env]}]
+       (if (not (seq todo))
+         ret
+         (optimize
+           (let [[sym expr & todo] todo]
+             (if (and (symbol? expr)
+                      (not (contains? (set (take-nth 2 todo)) expr)))
+               {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr}) :todo todo}
+               {:bindings (p/catv bindings [sym (env/expand env expr)]) :env (env/env-shadow env sym) :todo todo})))))
+      ([env bs]
+       (optimize {:todo bs :env env :bindings []})))
 
-(defn optimize
-  ([{:as ret :keys [todo bindings env]}]
-   (if (not (seq todo))
-     ret
-     (optimize
-       (let [[sym expr & todo] todo]
-         (if (and (symbol? expr)
-                  (not (contains? (set (take-nth 2 todo)) expr)))
-           {:bindings bindings :env (assoc-in env [(p/ns-sym) sym] {:substitute expr}) :todo todo}
-           {:bindings (p/catv bindings [sym (env/expand env expr)]) :env (env/env-shadow env sym) :todo todo})))))
-  ([env bs]
-   (optimize {:todo bs :env env :bindings []})))
+    (defn compile-let-form
+      ([{:keys [env return options] bs :bindings}]
+       (let [bs (bindings bs options)
+             bs (if (:unified options) (unified bs options) bs)
+             {:keys [env bindings]} (optimize env bs)
+             return (env/expand env return)]
+         (if-not (seq bindings)
+           return
+           (loop [return return
+                  [[p1 e1] & pes :as bs]
+                  (reverse (partition 2 bindings))]
+             (if-not (seq bs)
+               return
+               (let [mode (:mode (meta p1))]
+                 (recur (if (= mode :opt)
+                          `(let [~p1 ~e1] ~return)
+                          `(let [~p1 ~e1]
+                             (if (floor.core/success? ~p1)
+                               ~return
+                               ~(if (= :strict mode)
+                                  `(p/error "strict binding failure:\n" (:data ~p1))
+                                  p1))))
+                        pes)))))))
 
-#_(optimize {} '[a b c a])
+      ([env bindings return options]
+       (compile-let-form
+         {:env env :bindings bindings
+          :return return :options options}))))
 
 (g/generic+ bindings
 
@@ -225,14 +239,17 @@
              :vec
              (vec (mapcat (fn [[pat seed]]
                             (bindings pat seed options))
-                          (partition 2 xs))))
+                          (partition 2 xs)))
+             :map
+             (p/error "parallel bindings: not yet implemented"))
 
             ([x seed options]
 
              :sym
              (let [{:keys [name mode]}
                    (parse-symbol x options)]
-               [name (symbol-form seed mode)])
+               [(with-meta name {:mode mode})
+                seed #_(symbol-form seed mode)])
 
              :vec
              (if (compo/single-dotted? x)
@@ -252,3 +269,8 @@
                    ((::default @operators) (cons v args) seed options)))
              :any
              (bindings (gensym) `(floor.core/eq ~x ~seed) options)))
+
+(compile-let-form {}
+                  '[a 1 b 2]
+                  '(+ a b)
+                  {:binding-mode :strict})

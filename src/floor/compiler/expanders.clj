@@ -4,21 +4,11 @@
             [floor.compiler.lambda :as lambda]
             [boot.prelude :as p]))
 
-(defn if-form
-  ([test then]
-   (if (symbol? test)
-     `(if (floor.core/success? ~test) ~then ~test)
-     `(let [t# ~test]
-        (if (floor.core/success? t#) ~then t#))))
-  ([test then else]
-   (if else
-     `(if (floor.core/success? ~test) ~then ~else)
-     (if-form test then)))
-  ([test then test2 then2 & others]
-   (if-form test then (apply if-form test2 then2 others))))
-
-(defn if-expand [env args]
-  (apply if-form (map (partial env/expand env) args)))
+(defmacro expander
+  "syntax suger wrap a function in a: an expand key"
+  [& body]
+  (let [{:keys [name cases]} (p/parse-fn body)]
+    {:expand `(fn ~name ~@cases)}))
 
 ;; conditional bindings
 
@@ -31,93 +21,70 @@
            (get ~retsym ::cs-return)
            ~else)))))
 
-(defn cs-test-case
-  [env test then else]
-  (let [retsym (gensym)
-        raw-then (env/expand env then)
-        then (if (::void else) raw-then {::cs-return raw-then})]
-    `(let [~retsym ~(env/expand env test)]
-       (if (floor.core/success? ~retsym)
-         ~(cs-return then (env/expand env else))
-         ~retsym))))
-
 (defn cs-binding-case
   [env bs expr else options]
-  (let [bs (bindings/bindings bs options)
-        bs (if (:unified options) (bindings/unified bs options) bs)
-        {:keys [env bindings]} (bindings/optimize env bs)
-        raw-expr (env/expand env expr)
-        expr (if (::void else) raw-expr {::cs-return raw-expr})]
-    (if-not (seq bindings)
-      (cs-return expr else)
-      (loop [ret expr
-             [[p1 e1] & pes :as bs]
-             (reverse (partition 2 bindings))]
-        (if-not (seq bs)
-          (cs-return ret else)
-          (recur `(let [~p1 ~e1] (if (floor.core/success? ~p1) ~ret ~p1))
-                 pes))))))
+  (let [bs (if (vector? bs) bs [(gensym "check_") bs])
+        expr (if (::void else) expr {::cs-return expr})]
+    (cs-return
+      (bindings/compile-let-form
+        {:env env :bindings bs :return expr :options options})
+      (env/expand env else))))
 
 (defn cs-mk [options]
-  {:expand (fn cs-expand
-             [env [verb b1 e1 & more :as form]]
-             (cond
-               (not more)
-               (cs-expand env [verb b1 e1 {::void true}])
+  (expander cs-expand
+            [env [verb b1 e1 & more :as form]]
+            (cond
+              (not more)
+              (cs-expand env [verb b1 e1 {::void true}])
 
-               (not (next more))
-               (if (not (vector? b1))
-                 (cs-test-case env b1 e1 (first more))
-                 (cs-binding-case env b1 e1 (first more) options))
+              (not (next more))
+              (cs-binding-case
+                env b1 e1 (first more) options)
 
-               :else
-               (cs-expand env [verb b1 e1 (cs-expand env (cons verb more))])))})
+              :else
+              (cs-expand env [verb b1 e1 (cs-expand env (cons verb more))]))))
 
-(comment
-  (defn cs-test [form]
-    ((:expand (cs-mk {})) {} form))
 
-  (eval (cs-test '(cs [a 1 b 2] (+ a b) [a 10 b 12] :iop))))
 
 (defn let-mk [binding-form]
-  {:expand (fn [env form]
-             (env/expand env (list binding-form (second form) (list* 'do (drop 2 form)))))})
+  (expander [env form]
+            (env/expand env (list binding-form (second form) (list* 'do (drop 2 form))))))
 
 ;; lambdas and friends
 
 (defn lambda-mk [binding-form]
-  {:expand (fn [env form]
-             (env/expand env (lambda/compile binding-form (lambda/parse (next form)))))})
+  (expander [env form]
+            (env/expand env (lambda/compile binding-form (lambda/parse (next form))))))
 
 (defn lambda-definition [binding-form]
-  {:expand (fn [env form]
-             (let [{:as parsed :keys [name doc]} (lambda/parse (next form))]
-               `(def ~name
-                  ~@(when doc [doc])
-                  ~(env/expand env (lambda/compile binding-form parsed)))))})
+  (expander [env form]
+            (let [{:as parsed :keys [name doc]} (lambda/parse (next form))]
+              `(def ~name
+                 ~@(when doc [doc])
+                 ~(env/expand env (lambda/compile binding-form parsed))))))
 
 (defn unary-lambda-mk [binding-form]
-  {:expand (fn [env form]
-             (let [name? (even? (count form))
-                   cases (if name? (drop 2 form) (next form))
-                   lambda-cases (interleave (map vector (take-nth 2 cases)) (take-nth 2 (next cases)))
-                   lambda-form (concat (take (if name? 2 1) form) lambda-cases)
-                   lambda-expander (:expand (lambda-mk binding-form))]
-               (lambda-expander env lambda-form)))})
+  (expander [env form]
+            (let [name? (even? (count form))
+                  cases (if name? (drop 2 form) (next form))
+                  lambda-cases (interleave (map vector (take-nth 2 cases)) (take-nth 2 (next cases)))
+                  lambda-form (concat (take (if name? 2 1) form) lambda-cases)
+                  lambda-expander (:expand (lambda-mk binding-form))]
+              (lambda-expander env lambda-form))))
 
 (defn generic-mk [verb]
-  {:expand (fn [env form]
-             (env/expand env (cons verb (lambda/wrap-generic-body (next form)))))})
+  (expander [env form]
+            (env/expand env (cons verb (lambda/wrap-generic-body (next form))))))
 
 (def thing
-  {:expand (fn [env [_ & impls]]
-             `(g/thing
-                ~@(map (fn [[name & body]]
-                         (->> (lambda/parse body)
-                              (lambda/compile 'floor.core/cs)
-                              (env/expand env)
-                              (cons name)))
-                       impls)))})
+  (expander [env [_ & impls]]
+            `(g/thing
+               ~@(map (fn [[name & body]]
+                        (->> (lambda/parse body)
+                             (lambda/compile 'floor.core/cs)
+                             (env/expand env)
+                             (cons name)))
+                      impls))))
 
 ;; case
 
@@ -131,8 +98,33 @@
                        exprs)))))
 
 (defn case-mk [binding-form]
-  {:expand (fn [env [_ seed & cases]]
-             (env/expand env (case-expand {:cases cases :seed seed :binding-form binding-form})))})
+  (expander [env [_ seed & cases]]
+            (env/expand env (case-expand {:cases cases :seed seed :binding-form binding-form}))))
+
+
+(def OR
+  (expander self [env [v & xs]]
+            (let [retsym (gensym)]
+              (if xs
+                `(let [~retsym ~(env/expand env (first xs))]
+                   (if (floor.core/success? ~retsym)
+                     ~retsym
+                     ~(if (next xs)
+                        (self env (list* v (next xs)))
+                        retsym)))
+                `(floor.core/failure ::or)))))
+
+(def AND
+  (expander self [env [v & xs]]
+            (let [retsym (gensym)]
+              (if xs
+                `(let [~retsym ~(env/expand env (first xs))]
+                   (if (floor.core/success? ~retsym)
+                     ~(if (next xs)
+                        (self env (list* v (next xs)))
+                        retsym)
+                     ~retsym))
+                true))))
 
 (comment
 
@@ -146,29 +138,10 @@
    '(deff iop [a] a))
 
   ((:expand (cs-mk {})) {}
-   '(cs [a 42] a)))
+   '(cs [a 42] a))
 
+  (comment
+    (defn cs-test [form]
+      ((:expand (cs-mk {})) {} form))
 
-(def or-expand
-  {:expand (fn self [env [v & xs]]
-             (let [retsym (gensym)]
-               (if xs
-                 `(let [~retsym ~(env/expand env (first xs))]
-                    (if (floor.core/success? ~retsym)
-                      ~retsym
-                      ~(if (next xs)
-                         (self env (list* v (next xs)))
-                         retsym)))
-                 `(floor.core/failure ::or))))})
-
-(def and-expand
-  {:expand (fn self [env [v & xs]]
-             (let [retsym (gensym)]
-               (if xs
-                 `(let [~retsym ~(env/expand env (first xs))]
-                    (if (floor.core/success? ~retsym)
-                      ~(if (next xs)
-                         (self env (list* v (next xs)))
-                         retsym)
-                      ~retsym))
-                 true)))})
+    (eval (cs-test '(cs [a 1 b 2] (+ a b) [a 10 b 12] :iop)))))

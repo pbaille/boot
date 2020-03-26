@@ -57,7 +57,7 @@
              b (failure 2)] b
             :bottom))
 
-    (is [nil 1] (cs [?a (failure 0)] [a 1] 2))
+    (is [(failure 0) 1] (cs [?a (failure 0)] [a 1] 2))
 
     (is [0 1] (cs [?a 0] [a 1] 2))
 
@@ -339,8 +339,7 @@
     (throws
       (let [!a (pos? -1)] :never))
 
-    ;; TODO opt bindings are not holding failure therefore does not work in or... smells bad
-    #_(is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
+    (is (let [a 1 ?b (failure :aaaargg)] (add a (or b 0)))
           1)
 
     (is (lut [a 1 a 1] (add a a))
