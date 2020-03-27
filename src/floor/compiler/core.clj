@@ -2,7 +2,9 @@
   (:require
     [boot.prelude :as p :refer [p]]
     [floor.compiler.env :as env]
-    [floor.compiler.expanders :as exp]))
+    [floor.compiler.expanders :as exp]
+    [boot.generics :as g]
+    [floor.compiler.lambda :as lambda]))
 
 (def global-env
   (atom
@@ -43,9 +45,11 @@
       'deff (exp/lambda-definition 'floor.core/cs)
       'defu (exp/lambda-definition 'floor.core/csu)
 
-      'defg (exp/generic-mk 'boot.generics/generic)
+      'defg exp/defg
       'generic+ (exp/generic-mk 'boot.generics/generic+)
       'defrg (exp/generic-mk 'boot.generics/reduction)}}))
+
+(reset! g/lambda-case-compiler* lambda/compile-case)
 
 (defmacro import-top-level-form [s]
   (let [unqual-sym (symbol (name s))]

@@ -99,15 +99,15 @@
       []
       (c/let [{:keys [prims all]} (t/split-prims)]
         `(do
-           (g/generic ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
+           (defg ~'type [~'_] ~@(c/interleave (c/keys prims) (c/keys prims)))
            ~@(c/map (c/fn [k] `(declare ~(p/sym k "?"))) (c/keys all))
            ~@(c/map (c/fn [[k xs :as e]]
                       (let [cast-sym (p/sym '-> k)]
                            `(do
-                              (g/generic ~(p/sym k "?") [~'x]
+                              (defg ~(p/sym k "?") [~'x]
                                          ~@(if (prims k) [k 'x] (c/interleave xs (c/repeat 'x)))
                                          :any (failure {:typecheck ~k :isnt ~'x}))
-                              (g/generic ~cast-sym [~'x] ~k ~'x)
+                              (defg ~cast-sym [~'x] ~k ~'x)
                               (defn ~(p/sym cast-sym "?") [x#]
                                 (c/or (g/implements? x# ~cast-sym)
                                       (failure {:not-castable {:to ~k :from x#}}))))))
@@ -115,11 +115,35 @@
 
     (init-type-generics)
 
+    (defn argumentation
+
+      "in asparagus, many functions takes what we can call the object as first argument
+       I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
+       the argumentation function will help to turn this kind of function into a one that takes only the arguments (in the previous exemple: :a 1 :b 2)
+       and return a function that takes only the target object, and return the result.
+       (let [assoc_ (argumentation assoc)
+             assoc-a-and-b (assoc_ :a 1 :b 2)]
+          (assoc-a-and-b {})) ;=> {:a 1 :b 2}
+
+       many of the asparagus functions of this form, have their subjectified version with the same name suffixed with _
+       this is handy, for instance, to create chains of 1 argument functions
+       (> myseq (take_ 3) (dropend_ 2)) will thread 'myseq thru 2 functions, the semantics is analog to core/-> but it is a function
+       the '> function is defined in the :invocation-application-mapping section (the previous one)
+       (>_ (take_ 3) (dropend_ 2)) ;; will return a function that wait for its first argument ('myseq in the previous example)
+
+       the idea behind this is to ease function composition, the preference for guards over predicates is also a step in this direction
+       the further 'flow section will introduce some useful functional constructs that go even further (in conjunction with this and guards)"
+      [f]
+      (p/fn& [] (c/fn [x] (f x ...))))
+
+    (is {:a 1 :b 2 :c 3}
+        (((argumentation c/assoc) :a 1 :b 2) {:c 3}))
+
     )
 
 (do :monoids
 
-    (g/generic
+    (defg
       pure
       [_]
       :fun identity
@@ -132,7 +156,7 @@
       :key (keyword "")
       #{:nil :any} nil)
 
-    (g/generic
+    (defg
       pure?
       [x]
       :lst (if-not (c/seq x) () (failure {:not-pure x}))
@@ -148,7 +172,7 @@
       :nil (c/list b))
 
     ;; declaration (see implementation in titerable section
-    (g/generic iter [x])
+    (defg iter [x])
 
     (g/reduction
       +
@@ -210,14 +234,14 @@
       #{:sym :key} (iter (c/name a))
       :any (c/or (c/seq a) ()))
 
-    (g/generic
+    (defg
       vals
       [x]
       :coll (iter x)
       :map (c/or (c/vals x) ())
       :any (p/error "vals: no impl for " x))
 
-    (g/generic
+    (defg
       idxs
       [x]
       :coll (range (count x))
@@ -225,7 +249,7 @@
       :set (iter x)
       :any (p/error "idxs: no impl for " x))
 
-    (g/generic nth
+    (defg nth
                ([x i]
                 (nth (iter x) i (failure {:idx-not-found i :in x})))
                ([x i not-found]
@@ -236,7 +260,7 @@
        hiding the iter/wrap boilerplate"
 
       [name [a1 :as argv] expr]
-      `(g/generic
+      `(defg
          ~name
          ~argv
          :lst
@@ -245,8 +269,8 @@
                ~a1 (iter ~a1)]
               (wrap* a# ~expr))))
 
-    (g/generic car [x] (c/first (iter x)))
-    (g/generic last [x] (c/last (iter x)))
+    (defg car [x] (c/first (iter x)))
+    (defg last [x] (c/last (iter x)))
     (defiterg take [x n] (c/take n x))
     (defiterg drop [x n] (c/drop n x))
     (defiterg takend [x n] (c/take-last n x))
@@ -263,27 +287,27 @@
                   (take to)
                   (drop from)))
 
-    (defn splat
+    (deff splat
       "split at" [x n]
       [(take x n) (drop x n)])
 
-    (defn uncs "uncons"
+    (deff uncs "uncons"
       [x]
       [(car x) (cdr x)])
 
-    (defn runcs
+    (deff runcs
       "reverse uncons"
       [x]
       [(butlast x) (last x)])
 
-    (defn cons
+    (deff cons
       "like core.list*
        but preserve collection type"
-      [& xs]
+      [. xs]
       (let [[cars cdr] (runcs xs)]
            (+ (pure cdr) cars cdr)))
 
-    (defn cons? [x]
+    (deff cons? [x]
       (if (c/and (g/implements? x iter)
                  (failure? (pure? x)))
         x
@@ -305,7 +329,7 @@
 
 (do :callables
 
-    (g/generic application
+    (defg application
                [x]
                :fun (c/partial apply x)
                (c/partial apply (->fun x)))
@@ -321,30 +345,7 @@
     (def-callable * application)
 
     #_((->fun (c/fn [x] x)) 1)
-
-    (deff argumentation
-
-          "in asparagus, many functions takes what we can call the object as first argument
-           I mean, the thing we are working on, for instance, in the expression (assoc mymap :a 1 :b 2), mymap is what we call the object
-           the argumentation function will help to turn this kind of function into a one that takes only the arguments (in the previous exemple: :a 1 :b 2)
-           and return a function that takes only the target object, and return the result.
-           (let [assoc_ (argumentation assoc)
-                 assoc-a-and-b (assoc_ :a 1 :b 2)]
-              (assoc-a-and-b {})) ;=> {:a 1 :b 2}
-
-           many of the asparagus functions of this form, have their subjectified version with the same name suffixed with _
-           this is handy, for instance, to create chains of 1 argument functions
-           (> myseq (take_ 3) (dropend_ 2)) will thread 'myseq thru 2 functions, the semantics is analog to core/-> but it is a function
-           the '> function is defined in the :invocation-application-mapping section (the previous one)
-           (>_ (take_ 3) (dropend_ 2)) ;; will return a function that wait for its first argument ('myseq in the previous example)
-
-           the idea behind this is to ease function composition, the preference for guards over predicates is also a step in this direction
-           the further 'flow section will introduce some useful functional constructs that go even further (in conjunction with this and guards)"
-          [f]
-          (p/fn& [] (c/fn [x] (f x ...))))
-
-    (is {:a 1 :b 2 :c 3}
-        (((argumentation c/assoc) :a 1 :b 2) {:c 3})))
+    )
 
 (do :walking
 
@@ -451,15 +452,15 @@
     ;; declarations
     ;; ------------------------------------------------------------------------------
 
-    (g/generic form [x] x)
+    (defg form [x] x)
 
-    (g/generic getter [x] (p/error "no getter impl for " x))
-    (g/generic updater [x] (p/error "no updater impl for " x))
-    (g/generic checker [x] (p/error "no checker impl for " x))
+    (defg getter [x] (p/error "no getter impl for " x))
+    (defg updater [x] (p/error "no updater impl for " x))
+    (defg checker [x] (p/error "no checker impl for " x))
 
-    (g/generic rget [x y] ((getter x) y))
-    (g/generic rupd [x y f] ((updater x) y f))
-    (g/generic rcheck [x y] ((checker x) y))
+    (defg rget [x y] ((getter x) y))
+    (defg rupd [x y f] ((updater x) y f))
+    (defg rcheck [x y] ((checker x) y))
 
     ;; core
     ;; ------------------------------------------------------------------------------
@@ -755,7 +756,7 @@
                 :any
                 (updater (partial eq x)))
 
-    (g/generic combine [x y])
+    (defg combine [x y])
 
     (defn step [x y]
       (if (c/satisfies? Icombine_2 x)
@@ -798,6 +799,5 @@
                 (f1 node (or (vec? node) (map? node)))
                 (f1 leaf (* leaf xs))))))
 
-((f1 "doc" x x) 1)
 
 

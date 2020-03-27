@@ -69,9 +69,12 @@
 (defn lambda-definition [binding-form]
   (expander [env form]
             (let [{:as parsed :keys [name doc]} (lambda/parse (next form))]
-              `(def ~name
-                 ~@(when doc [doc])
-                 ~(env/expand env (lambda/compile binding-form parsed))))))
+              `(do
+                 (def ~name
+                   ~@(when doc [doc])
+                   ~(env/expand env (lambda/compile binding-form parsed)))
+                 (def ~(p/sym name '_)
+                   (floor.core/argumentation ~name))))))
 
 (defn unary-lambda-mk [binding-form]
   (expander [env form]
@@ -94,6 +97,12 @@
 (defn generic-mk [verb]
   (expander [env form]
             (env/expand env (cons verb (lambda/wrap-generic-body (next form))))))
+
+(def defg
+  (expander [env form]
+            (let [n (second form)]
+              `(do (g/generic ~@(next form))
+                   (def ~(p/sym n '_) (floor.core/argumentation ~n))))))
 
 (def thing
   (expander [env [_ & impls]]
@@ -171,31 +180,31 @@
               (env/expand env x))))
 
 #_(def OR
-  (expander self [env [v & xs]]
-            (let [retsym (gensym)]
-              (if xs
-                #_(expand-simple-or (first xs) (list* v (next xs)))
-                `(let [~retsym ~(env/expand env (first xs))]
-                   (if (floor.core/success? ~retsym)
-                     ~retsym
-                     ~(if (next xs)
-                        (self env (list* v (next xs)))
-                        retsym)))
-                `(floor.core/failure ::or)))))
+    (expander self [env [v & xs]]
+              (let [retsym (gensym)]
+                (if xs
+                  #_(expand-simple-or (first xs) (list* v (next xs)))
+                  `(let [~retsym ~(env/expand env (first xs))]
+                     (if (floor.core/success? ~retsym)
+                       ~retsym
+                       ~(if (next xs)
+                          (self env (list* v (next xs)))
+                          retsym)))
+                  `(floor.core/failure ::or)))))
 
 
 
 #_(def AND
-  (expander self [env [v & xs]]
-            (let [retsym (gensym)]
-              (if xs
-                (if (next xs)
-                  `(let [~retsym ~(env/expand env (first xs))]
-                     (if (floor.core/success? ~retsym)
-                       ~(self env (list* v (next xs)))
-                       ~retsym))
-                  (env/expand env (first xs)))
-                true))))
+    (expander self [env [v & xs]]
+              (let [retsym (gensym)]
+                (if xs
+                  (if (next xs)
+                    `(let [~retsym ~(env/expand env (first xs))]
+                       (if (floor.core/success? ~retsym)
+                         ~(self env (list* v (next xs)))
+                         ~retsym))
+                    (env/expand env (first xs)))
+                  true))))
 
 
 

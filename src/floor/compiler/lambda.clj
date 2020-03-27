@@ -110,5 +110,12 @@
      ~@(map (partial compile-arity verb) arity-map)))
 
 (defn wrap-generic-body [body]
+  (println 'lambda-case-compiler body)
   (let [{:as parsed :keys [arity-map name]} (parse body)]
     (cons name (map (partial compile-arity 'floor.core/cs) arity-map))))
+
+(defn compile-case [case]
+  (let [{:as parsed :keys [arity-map name]} (parse case)]
+    (assert (= 1 (count arity-map))
+            (str "compile-case wrong arg " case " only one case allowed"))
+    (first (map (partial compile-arity 'floor.core/cs) arity-map))))
