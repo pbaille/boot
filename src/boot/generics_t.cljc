@@ -8,12 +8,12 @@
 
 (generic g1 [x]
          ;; prim type impl
-         :vec :g1vec
+         :vec "I am vec"
          ;; this type is a group
          ;; under the hood it implements for all collections
-         :coll [:g1coll x]
+         :coll ["I am coll" x]
          ;; group litteral can be handy
-         #{:key :sym} :key-or-sym)
+         #{:key :sym} "I am key-or-sym")
 
 (p/assert
   (g1 [])
@@ -25,7 +25,7 @@
 ;; extension
 (generic+ g1 [x]
           ;; str impl
-          :str [:str x]
+          :str ["str" x]
           ;; if a last expresion is given it extends Object
           [:unknown x])
 
@@ -69,18 +69,19 @@
 
 
 ;; poly arity exemple
-(generic g2
-         ([x y]
-          :coll [:g2coll x y]
-          :vec [:g2vec x y] ;; this will overide the coll impl defined above for vectors, it has to be after
-          :num [:g2num x y]
-          :any [:g2any x y])
-         ([x y z]
-          :coll [:coll x y z])
-         ;; variadic arity
-         ([x y z & more]
-          :any
-          [:variadic x y z more]))
+(macroexpand
+  '(generic g2
+          ([x y]
+           :coll [:g2coll x y]
+           :vec [:g2vec x y] ;; this will overide the coll impl defined above for vectors, it has to be after
+           :num [:g2num x y]
+           :any [:g2any x y])
+          ([x y z]
+           :coll [:coll x y z])
+          ;; variadic arity
+          ([x y z & more]
+           :any
+           [:variadic x y z more])))
 
 (p/assert
   (= (g2 [] 1)

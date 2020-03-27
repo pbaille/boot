@@ -15,16 +15,16 @@
       (let [cnt (count v)
             symseed? (symbol? seed)]
         (p/with-gensyms
-          [vect head tail ¡linecheck ¡size>= ¡size=]
+          [vect head tail linecheck size>= size=]
           (let [vect (if symseed? seed vect)]
             (p/catv
-              (when-not symseed? [vect seed])
+              (when-not symseed? (bindings [vect seed] options))
               (bindings
-                [¡linecheck `(sequential? ~vect)
+                [linecheck `(sequential? ~vect)
                  head `(floor.core/take ~vect ~cnt)
-                 ¡size>= `(floor.core/eq (count ~head) ~cnt)
+                 size>= `(floor.core/eq (count ~head) ~cnt)
                  tail `(floor.core/drop ~vect ~cnt)
-                 ¡size= `(floor.core/pure? ~tail)]
+                 size= `(floor.core/pure? ~tail)]
                 options)
               (mapcat
                 (fn [e i] (bindings e `(floor.core/nth ~head ~i) options))
@@ -42,15 +42,15 @@
           [ysym qsym cdr']
           (let [ysym (if symseed? seed ysym)]
             (p/catv
-              (when-not symseed? [ysym seed])
+              (when-not symseed? (bindings [ysym seed] options))
               (raw-vec cars `(floor.core/take ~ysym ~doti) options)
               (bindings eli `(floor.core/drop ~ysym ~doti) options)
               #_(bind.vec.body cars ysym doti)
               (when-not (zero? qcnt)
                 (p/catv
-                  [cdr' eli]
-                  (bindings eli `(floor.core/dropend ~cdr' ~qcnt) options)
-                  [qsym `(floor.core/takend ~cdr' ~qcnt)]
+                  (bindings [cdr' eli
+                             eli `(floor.core/dropend ~cdr' ~qcnt)
+                             qsym `(floor.core/takend ~cdr' ~qcnt)] options)
                   (raw-vec queue qsym options)))))))))
 
 (do :map
@@ -64,22 +64,24 @@
 
     (defn raw-map [x seed options]
       (p/with-gensyms
-        [¡mapcheck ¡seed]
+        [mapcheck seedsym]
         (p/catv
-          [¡seed seed
-           ¡mapcheck `(map? ~¡seed)]
-          (map-keys x ¡seed options))))
+          (bindings
+            [seedsym seed
+             mapcheck `(map? ~seedsym)]
+            options)
+          (map-keys x seedsym options))))
 
     (defn composite-map [x seed options]
       (let [rs (get x '.)
             m (dissoc x '.)
             ks (keys m)]
         (p/with-gensyms
-          [¡seed]
+          [seedsym]
           (p/catv
-            [¡seed seed]
-            (map-keys m ¡seed options)
-            (bindings rs `(dissoc ~¡seed ~@ks) options))))))
+            (bindings [seedsym seed] options)
+            (map-keys m seedsym options)
+            (bindings rs `(dissoc ~seedsym ~@ks) options))))))
 
 (do :sym
 
@@ -117,7 +119,7 @@
        (p/with-gensyms
          [seedsym]
          (apply p/catv
-                [seedsym seed]
+                (bindings [seedsym seed] options)
                 (map #(bindings % seedsym options) xs))))
 
      :ks
@@ -147,10 +149,9 @@
      (fn [[a b] seed options]
        (p/with-gensyms
          [seedsym]
-         (p/catv
-           [seedsym seed]
-           (bindings a `(floor.core/car ~seedsym) options)
-           (bindings b `(floor.core/cdr ~seedsym) options))))
+         (bindings [seedsym seed
+                    a `(floor.core/car ~seedsym)
+                    b `(floor.core/cdr ~seedsym)] options)))
 
      :quote
      (fn [[a] seed options]
@@ -158,9 +159,7 @@
 
      :bind_
      (fn [[p expr] seed options]
-       (p/catv
-         ['_ seed]
-         (bindings p expr options)))
+       (bindings ['_ seed p expr] options))
 
      :!
      (fn [[f & [p]] seed options]
@@ -218,14 +217,22 @@
              (if-not (seq bs)
                return
                (let [mode (:mode (meta p1))]
-                 (recur (if (= mode :opt)
-                          `(let [~p1 ~e1] ~return)
+                 (recur (condp = mode
+                          :opt
+                          (if (= p1 return) e1 `(let [~p1 ~e1] ~return))
+
+                          :strict
                           `(let [~p1 ~e1]
                              (if (floor.core/success? ~p1)
                                ~return
-                               ~(if (= :strict mode)
-                                  `(p/error "strict binding failure:\n" (:data ~p1))
-                                  p1))))
+                               (p/error "strict binding failure:\n" (:data ~p1))))
+
+                          :short
+                          (if (= p1 return) e1
+                            `(let [~p1 ~e1]
+                               (if (floor.core/success? ~p1)
+                                 ~return
+                                 ~p1))))
                         pes)))))))
 
       ([env bindings return options]
@@ -270,7 +277,7 @@
              :any
              (bindings (gensym) `(floor.core/eq ~x ~seed) options)))
 
-(compile-let-form {}
+#_(compile-let-form {}
                   '[a 1 b 2]
                   '(+ a b)
                   {:binding-mode :strict})

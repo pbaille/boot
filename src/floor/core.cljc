@@ -1,7 +1,7 @@
 (ns floor.core
   (:refer-clojure
     :exclude
-    [get not let chunk case take drop cons or and * + vals iter vec map set str key fn nth])
+    [get not let chunk case take drop cons or and * + < > vals iter vec map set str key fn nth])
   (:require [clojure.core :as c]
             [boot.generics :as g]
             [boot.named :as n]
@@ -52,7 +52,8 @@
           ident? qualified-ident? true? integer? special-symbol? ratio? delay? ifn? nat-int? chunked-seq?
           distinct? pos-int? odd? uuid? false? list? simple-ident? rational? number? not-any? qualified-symbol?
           seqable? symbol? coll?
-          = > >= < <=]))
+          = #_> >= #_< <=
+          ]))
 
     (defn not [x]
       (if (c/contains? #{false nil} x)
@@ -81,8 +82,9 @@
     (import-core-stuff)
 
     (def eq =) (def neq not=)
-    (def gt >) (def gte >=)
-    (def lt <) (def lte <=)
+    ;; TODO bring back < and >
+    #_(def gt >) (def gte >=)
+    #_(def lt <) (def lte <=)
     (def add c/+) (def sub c/-) (def mul c/*) (def div c//)
 
     ;; we will create a bunch of things based on the type registry
@@ -284,8 +286,8 @@
     (defn cons? [x]
       (if (c/and (g/implements? x iter)
                  (failure? (pure? x)))
-          x
-          (failure {:not-cons x})))
+        x
+        (failure {:not-cons x})))
 
     ;; vector optimized impls
 
@@ -424,11 +426,11 @@
           "similar to core/partition"
           [x size step]
           (let [[pre post] (splat x size)]
-               (if (cons? post)
-                 (cons pre (scan (drop x step) size step))
-                 (if (cons? pre)
+               (cs (cons? post)
+                   (cons pre (scan (drop x step) size step))
+                   (cons? pre)
                    (sip (pure x) pre)
-                   (pure x)))))
+                   (pure x))))
 
     (deff chunk
           "split an iterable 'x by chunk of size 'size"
@@ -453,12 +455,10 @@
 
     (g/generic getter [x] (p/error "no getter impl for " x))
     (g/generic updater [x] (p/error "no updater impl for " x))
-    (g/generic swaper [x] (p/error "no swaper impl for " x))
     (g/generic checker [x] (p/error "no checker impl for " x))
 
     (g/generic rget [x y] ((getter x) y))
     (g/generic rupd [x y f] ((updater x) y f))
-    (g/generic rswap [x y] ((swaper x) y))
     (g/generic rcheck [x y] ((checker x) y))
 
     ;; core
@@ -472,12 +472,8 @@
              ([x y] (rget y x))
              ([x y & ys] (reduce get (rget y x) ys)))
 
-    (p/defn+ swap
-             ([x y] (rswap y x))
-             ([x y & ys] (reduce swap (rswap y x) ys)))
-
     (p/defn+ upd
-             ([x y f] (rupd y x (swaper f)))
+             ([x y f] (rupd y x (->fun f)))
              ([x y f & others] (reduce upd* (rupd y x f) (partition 2 others))))
 
     ;; extras
@@ -552,30 +548,27 @@
 
     (do :impl
 
-        (defn vec->swaper [v]
-          (let [ts (c/map swaper v)]
+        (defn vec->fun [v]
+          (let [ts ($ v ->fun)]
                (f [y] (c/reduce #(%2 %1) y ts))))
 
-        (defn link->swaper [e]
+        (defn link->fun [e]
           (f [x]
              (upd x
                   (c/key e)
-                  #(swap % (c/val e)))))
+                  (c/val e))))
 
-        (defn map->swaper [m]
-          (vec->swaper (mapv link->swaper m))))
+        (defn map->fun [m]
+          (vec->fun (mapv link->fun m))))
 
-    (g/generic+ swaper
+    (g/generic+ ->fun
                 [x]
                 :nil c/identity
-                :fun x
-                :map (map->swaper x)
-                :vec (vec->swaper x)
-                :link (link->swaper x)
+                ;:fun x
+                :map (map->fun x)
+                :vec (vec->fun x)
+                :link (link->fun x)
                 :any (c/constantly x))
-
-    (macroexpand-1 '(g/thing (rswap [x y] :swap!)
-                             (rget [x y] :get!)))
 
     (g/generic+ getter
                 [x]
@@ -760,165 +753,51 @@
                      (f [y f] (cs [z (get y)] (f z))))
 
                 :any
-                (updater (partial eq x))))
+                (updater (partial eq x)))
+
+    (g/generic combine [x y])
+
+    (defn step [x y]
+      (if (c/satisfies? Icombine_2 x)
+        (combine x y)
+        ((->fun y) x)))
+
+    (deff >
+          "thread x thru given transformations (xs) shortcircuiting on first nil result"
+          [x] x
+          [x y] (and x (step x y))
+          [x y . ys]
+          (red x
+               (f [x y]
+                  (let [?x (step x y)]
+                       (or x (reduced x))))
+               (cons y ys)))
+
+    (deff <
+           "try all given transformations over x until the first non nil result"
+           [x] (failure ::<)
+           [x y] (step x y)
+           [x y . ys]
+           (red x
+                (f [x y]
+                   (cs [x (step x y)]
+                       (reduced x) x))
+                (cons y ys)))
+
+    )
 
 
+(def df
+  (f1 "data function,
+       create a function from a data structure that
+       apply all functions contained in it (deeply) to further args.
+       preserve original structure"
+      data
+      (f [. xs]
+         (walk? data
+                (f1 node (or (vec? node) (map? node)))
+                (f1 leaf (* leaf xs))))))
 
-(comment
-  (defmacro lazy-cast [pat & body]
-    `(let [ret# (atom nil)]
-          (f [x#]
-             (or @ret#
-                 (let [~pat x#]
-                      (reset! ret# (do ~@body)))))))
+((f1 "doc" x x) 1)
 
-  (let [f (lazy-cast x (println "casted " x) (str x))]
-       [(f 1) (f [1 2])]))
-
-(comment
-  :comparing-perfs-between-reify-and-records-construction
-  (defprotocol P1 (iop [x]))
-  (defprotocol P2 (pop [x]))
-  (defn p1 [iop-impl] (reify P1 (iop [x] (iop-impl x))))
-  (defrecord R1 [x] P1 (iop [_] x))
-  (defrecord R2 [iop-impl] P1 (iop [x] (iop-impl x)))
-
-  ;; record construction is slightly faster
-  (time (dotimes [_ 100000] (p1 1)))
-  (time (dotimes [_ 100000] (R1. 1)))
-
-  (let [x (R2. identity)
-        y (p1 identity)]
-       #_(time (dotimes [_ 100000] (iop x)))
-       (time (dotimes [_ 100000] (iop y))))
-
-  ;; get a glance of perf impact when introducing a failure value for control flow
-  (time (dotimes [_ 100000] (let [x (rand-nth [nil true false])] (when-not (nil? x) x))))
-  (time (dotimes [_ 100000] (let [x (rand-nth [nil true ::fail])] (when-not (core/= ::fail x) x))))
-  (time (dotimes [_ 100000] (let [x (rand-nth [nil true false])] (when-not x x)))))
-
-
-
-;; fn sketxh
-
-(comment
-
-  (fn inc0
-      (:num a) ;; seq denotes arity 1 , keywords denotes type
-      (inc a))
-
-  ;; should be expanded to
-  '(fn inc0
-       (get a num?) ;; the type keyword is replaced by the corresponding type predicate
-       (inc a))
-
-  (is 2 (inc0 1))
-
-  ;or
-
-  '(fn inc0
-       (t a :num) ;; maybe this is better and leaves keyword to contains check
-       (inc a))
-
-  ;; function taking several positional arguments
-  (fn add1 :num ;; optional return spec
-      [(:num a) (:num b)]
-      (+ a b))
-
-  (is 3
-      (add1 [1 2])
-      (add1 1 2))
-
-  ;; function taking a map
-  (fn add2
-      {a :num
-       b [number? neg?]} (+ a b))
-
-  (is 3
-      (add2 {:a 1 :b 2})
-      (add2 :a 1 :b 2))
-
-  ;; case function
-  (fn add3 :num
-      [(:num a)] a ;; can i strip this literal vec ?
-      [(:num a) (:num b)] (+ a b)
-      [a b & c] (reduce add3 (add3 a b) c))
-
-  (is 10
-      (add3 5 5)
-      (add3 5 3 2)
-      (add3 5 3 1 1))
-
-  (fn pos-int
-      ([int? pos?] a) a) ;; anything implementing get is a valid spec
-
-  (fn pouet
-      (I a do-stuff) (do-stuff a)) ;; a has to implement do-stuff
-
-  (fn pouet
-      (I a [do-stuff greet]) (do-stuff a)) ;; a has to implement do-stuff and greet (vector is optional)
-
-  ;; maybe we should implement let first
-
-  (let [(:num a) x] a)
-
-  ;; then fn expansion use this let form
-  (fn inc0 [x]
-      (let [(:num a) x]
-           (inc a)))
-
-  )
-
-(comment
-
-  (g/generic form [x] x)
-
-
-
-  ;; monoids
-  (g/generic pure [x])
-  (g/generic pure? [x])
-  (g/reduction sip [x y])
-  (g/reduction + [x y])
-
-  ;; iterables
-  (g/generic iter [x])
-  (g/generic vals [x])
-  (g/generic idxs [x])
-
-  ;;
-  (g/generic getter [x] (p/error "no getter impl for " x))
-  (g/generic updater [x] (p/error "no updater impl for " x))
-  (g/generic swaper [x] (p/error "no swaper impl for " x))
-  (g/generic checker [x] (p/error "no checker impl for " x))
-
-  (g/generic rget [x y] ((getter x) y))
-  (g/generic rupd [x y f] ((updater x) y f))
-  (g/generic rswap [x y] ((swaper x) y))
-  (g/generic rcheck [x y] ((checker x) y))
-
-  (comment
-    (defn+ check
-           ([x y] (rcheck y x))
-           ([x y & ys] (and (rcheck y x) (check* x ys))))
-
-    (defn+ get
-           ([x y] (rget y x))
-           ([x y & ys] (reduce get (rget y x) ys)))
-
-    ;; here reduce is problematic
-    ;; because accumulator can turn into ::fail, we have to cut the loop
-    ;; also, failure? could be a generic function that returns true if the implementing type represents an error
-    ;; potentially holding explanations and usable in spec/explain like things
-    ;; the custom shortcircuiting thing has not so much impact on perfs (see control namespace)
-    ;; and with a dynamic var we can swipe control-flow macro expansions
-    ;; currently it is a row value tested against its arg with = but it can be a predicate instead, more powerful
-
-    (defn+ swap
-           ([x y] (rswap y x))
-           ([x y & ys] (reduce swap (rswap y x) ys)))
-
-    (defn+ upd
-           ([x y f] (rupd y x (swaper f)))
-           ([x y f & others] (reduce upd* (rupd y x f) (partition 2 others))))))
 

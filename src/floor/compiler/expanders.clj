@@ -13,8 +13,18 @@
 ;; conditional bindings
 
 (defn cs-return [ret else]
-  (if (::void else)
-    ret
+  (cond
+
+    (::void else) ret
+
+    (= ret else) ret
+
+    (symbol? ret)
+    `(if (floor.core/success? ~ret)
+       (get ~ret ::cs-return)
+       ~else)
+
+    :else
     (let [retsym (gensym)]
       `(let [~retsym ~ret]
          (if (floor.core/success? ~retsym)
@@ -70,7 +80,16 @@
                   lambda-cases (interleave (map vector (take-nth 2 cases)) (take-nth 2 (next cases)))
                   lambda-form (concat (take (if name? 2 1) form) lambda-cases)
                   lambda-expander (:expand (lambda-mk binding-form))]
+
               (lambda-expander env lambda-form))))
+
+(def underscore-lambda
+  (expander [env [v expr]]
+            (let [argsym (gensym)]
+              (env/expand env (list 'floor.core/f1 argsym
+                                    (env/expand {(p/ns-sym) {'_ {:substitute argsym}}} expr))))))
+
+
 
 (defn generic-mk [verb]
   (expander [env form]
@@ -101,11 +120,61 @@
   (expander [env [_ seed & cases]]
             (env/expand env (case-expand {:cases cases :seed seed :binding-form binding-form}))))
 
+(defn expand-simple-or [env a b]
+  (let [a (env/expand env a)
+        b (env/expand env b)]
+
+    (cond
+      (= a b) a
+
+      (symbol? a)
+      `(if (floor.core/success? ~a) ~a ~b)
+
+      :else
+      (let [retsym (gensym)]
+        `(let [~retsym ~a]
+           (if (floor.core/success? ~retsym) ~retsym ~b))))))
+
+(defn expand-simple-and [env a b]
+  (let [a (env/expand env a)
+        b (env/expand env b)
+        retsym (gensym)]
+
+    (cond
+      (= a b) a
+
+      (symbol? a)
+      `(if (floor.core/success? ~a)
+         ~b ~a)
+
+      :else
+      `(let [~retsym ~a]
+         (if (floor.core/success? ~retsym)
+           ~b ~retsym)))))
+
+(defn expand-simple-if [env test then else]
+  (let [test (env/expand env test)
+        then (env/expand env then)
+        else (env/expand env else)]
+    ))
 
 (def OR
   (expander self [env [v & xs]]
+            (if xs
+              (expand-simple-or env (first xs) (cons v (next xs)))
+              `(floor.core/failure ::or))))
+
+(def AND
+  (expander self [env [v x & xs]]
+            (if xs
+              (expand-simple-and env x (cons v xs))
+              (env/expand env x))))
+
+#_(def OR
+  (expander self [env [v & xs]]
             (let [retsym (gensym)]
               (if xs
+                #_(expand-simple-or (first xs) (list* v (next xs)))
                 `(let [~retsym ~(env/expand env (first xs))]
                    (if (floor.core/success? ~retsym)
                      ~retsym
@@ -114,7 +183,9 @@
                         retsym)))
                 `(floor.core/failure ::or)))))
 
-(def AND
+
+
+#_(def AND
   (expander self [env [v & xs]]
             (let [retsym (gensym)]
               (if xs
@@ -126,12 +197,16 @@
                   (env/expand env (first xs)))
                 true))))
 
+
+
 ((:expand AND) {} '(and ((car checkers) y)
                         (recur (cdr checkers))))
 
 
 
 (comment
+
+  ((:expand underscore-lambda) {} '(f_ (mul 2 _)))
 
   ((:expand (cs-mk {})) {}
    '(cs [a 1] a [b 2] b))

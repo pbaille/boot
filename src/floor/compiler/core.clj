@@ -15,6 +15,7 @@
       '!csu (exp/cs-mk {:binding-mode :strict :unified true})
 
       'or exp/OR
+      ;'or2 exp/OR2
       'and exp/AND
 
       'let (exp/let-mk 'floor.core/cs)
@@ -33,6 +34,8 @@
 
       'f1 (exp/unary-lambda-mk 'floor.core/cs)
       'f1u (exp/unary-lambda-mk 'floor.core/csu)
+
+      'f_ exp/underscore-lambda
 
       'case (exp/case-mk 'floor.core/cs)
       'casu (exp/case-mk 'floor.core/csu)
@@ -54,6 +57,10 @@
               (keys (get @global-env 'floor.core)))))
 
 (comment :scratch
+
+         (env/expand @global-env '(floor.core/f_ (mul 2 _)))
+
+         (env/expand @global-env '(floor.core/or 1 2 3))
 
          (env/expand @global-env '(floor.core/and ((car checkers) y)
                                            (recur (cdr checkers))))

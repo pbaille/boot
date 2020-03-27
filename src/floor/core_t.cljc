@@ -36,6 +36,11 @@
     (is (failure "my failure")
         (cs [a (failure "my failure")] a))
 
+    (is (failure 1)
+        (cs [a (failure 0)]
+            a
+            (failure 1)))
+
     (p/throws (!cs [a (failure 1)] a))
     (is 1 (!cs [a 1] a))
 
@@ -50,10 +55,11 @@
 
     (is :bottom
         (cs [a (failure 1)
-             _printed (println "never")] a
+             printed (println "never")] a
             [something 42
              b (failure 2)] b
-            :bottom))
+            :bottom
+            ))
 
     (is [(failure 0) 1] (cs [?a (failure 0)] [a 1] 2))
 
@@ -236,6 +242,43 @@
     (is (failure? (cons? {})))
     (is (failure? (cons? #{}))))
 
+(do :walking
+
+    (is ($+ [5 6 7]
+            c/range
+            (c/juxt identity (c/partial c/+ 10)))
+        [0 10 1 11 2 12 3 13 4 14
+         0 10 1 11 2 12 3 13 4 14 5 15
+         0 10 1 11 2 12 3 13 4 14 5 15 6 16])
+
+    ;; zip
+    (is '(3 6 9)
+        (zip c/+ [1 2 3] [1 2 3] [1 2 3]))
+
+    ;; zip+
+    (is [1 1 1 2 2 2 3 3 3]
+        (zip+ (c/partial sip []) [1 2 3] [1 2 3] [1 2 3]))
+
+    ;; scan
+    (is [[1 2] [3 4]]
+        (scan [1 2 3 4] 2 2))
+    (is [[1 2] [2 3] [3 4]]
+        (scan [1 2 3 4] 2 1))
+    (is '((0 1 2 3) (2 3 4))
+        (scan (c/range 5) 4 2))
+
+    ;; chunk
+    (is [[1 2] [3]]
+        (chunk [1 2 3] 2))
+    (is []
+        (chunk [] 2))
+
+    ;; braid
+    (is '(1 4 2 5 3 6)
+        (braid [1 2 3] [4 5 6]))
+    (is '(1 4 2 5)
+        (braid [1 2 3] [4 5])))
+
 (do :bindings
 
     (is (let [a 1] a)
@@ -380,6 +423,15 @@
          (is :eq (f [1 1]))
          (is :neq (f [1 2])))
 
+    (let [(cons a b) [1 2 3]] [a b])
+    (let [(cons a b) {:a 1 :b 2 :c 3}] [a b])
+
+    (let [add (f add
+                 [0 x] x
+                 [(neg? x) y] (add (inc x) (inc y))
+                 [x y] (add (dec x) (inc y)))]
+         (add -10 12))
+
     (let [x [:tup [1 2]]]
          (throws
            (!csu [[:wat a] x] :nop
@@ -392,186 +444,248 @@
 
     )
 
-(do :check-tests
+(do :getter-lenses-and-friends
 
-    (is true (check 1 pos?))
-    (is true (check [0 1 2] 2))
-    (is (failure? (check [0 1 2] 3)))
-    (is true
-        (check {:a 1} [:a pos?]))
-    (is true
-        (check {:a 1 :b {:c -1 :d 0}}
-               [:a pos?]
-               [:b :c neg?]))
-    (is (failure? (check {:a 1} (car {:a neg?}))))
-    (is true (check {:a 1} (car {:a pos?})))
-    (is true
-        (check {:a 1 :b -1}
-               {:a pos?
-                :b neg?}))
-    (is (check 0 [number? zero?]))
-    (is true
-        (check {:a 1 :b {:c -1 :d 0}}
-               {:a pos?
-                :b {:c neg? :d [number? zero?]}
-                }))
+    (do :check-tests
 
-    (is (failure?
-          (check {:a 1 :b {:c -1 :d 0}}
-                 {:a pos?
-                  :b {:c neg? :d string?}
-                  }))))
+        (is true (check 1 pos?))
+        (is true (check [0 1 2] 2))
+        (is (failure? (check [0 1 2] 3)))
+        (is true
+            (check {:a 1} [:a pos?]))
+        (is true
+            (check {:a 1 :b {:c -1 :d 0}}
+                   [:a pos?]
+                   [:b :c neg?]))
+        (is (failure? (check {:a 1} (car {:a neg?}))))
+        (is true (check {:a 1} (car {:a pos?})))
+        (is true
+            (check {:a 1 :b -1}
+                   {:a pos?
+                    :b neg?}))
+        (is (check 0 [number? zero?]))
+        (is true
+            (check {:a 1 :b {:c -1 :d 0}}
+                   {:a pos?
+                    :b {:c neg? :d [number? zero?]}
+                    }))
 
-(do :get-tests
+        (is (failure?
+              (check {:a 1 :b {:c -1 :d 0}}
+                     {:a pos?
+                      :b {:c neg? :d string?}
+                      }))))
 
-    (is 0
-        (get 0 zero?)
-        (get 0 [number? zero?])
-        (get {:a 0} :a)
-        (get {:a 0} [:a zero?])
-        (get {:a {:b 0}} [:a :b])
-        (get {:a {:b 0}} [:a :b zero?]))
+    (do :get-tests
 
-    (is 1
-        (get [1] 0) ;; getting an index
-        (get [{:a 1}] [0 :a number?]))
+        (is 0
+            (get 0 zero?)
+            (get 0 [number? zero?])
+            (get {:a 0} :a)
+            (get {:a 0} [:a zero?])
+            (get {:a {:b 0}} [:a :b])
+            (get {:a {:b 0}} [:a :b zero?]))
 
-    (is {:count 10, :sum 45}
-        (get (range 10)
-             {:count count
-              :sum (partial apply +)}))
+        (is 1
+            (get [1] 0) ;; getting an index
+            (get [{:a 1}] [0 :a number?]))
 
-    (is 9/2
-        (get (range 10)
-             ;; using map as a getter is building a map structure where
-             ;; each key contains the result of its val as a getter applied to the given seed
-             {:count count
-              :sum (partial apply +)}
-             (p/fk [count sum]
-                   (/ sum count)))))
+        (is {:count 10, :sum 45}
+            (get (range 10)
+                 {:count count
+                  :sum (partial apply +)}))
 
-(do :keyword-lenses
-    (is 1 (get {:a 1} :a))
-    (is (failure? (get {:a 1} :b)))
-    (is {:a 2} (upd {:a 1} :a inc))
-    (is {:a 1 :b 1} (upd {:a 0 :b 2} :a inc :b dec)))
+        (is 9/2
+            (get (range 10)
+                 ;; using map as a getter is building a map structure where
+                 ;; each key contains the result of its val as a getter applied to the given seed
+                 {:count count
+                  :sum (partial apply +)}
+                 (p/fk [count sum]
+                       (/ sum count)))))
 
-(do :indexes-leses
-    (is 2 (get [1 2 3] 1))
-    (is [1 3 3] (upd [1 2 3] 1 inc))
-    (is [2 2 2] (upd [1 2 3] 0 inc 2 dec))
-    (is [1 2 [4 4]]
-        (upd [1 2 [3 4]] [2 0] inc)))
+    (do :keyword-lenses
+        (is 1 (get {:a 1} :a))
+        (is (failure? (get {:a 1} :b)))
+        (is {:a 2} (upd {:a 1} :a inc))
+        (is {:a 1 :b 1} (upd {:a 0 :b 2} :a inc :b dec)))
 
-(do :composition
-    ;; vector denotes composition (left to right)
-    (is 1 (get {:a {:b 1}} [:a :b]))
-    (is 3 (get {:a {:b [1 2 3]}} [:a :b 2]))
-    (is {:a {:b 2}} (upd {:a {:b 1}} [:a :b] inc))
-    (is {:a {:b 2 :c 1}}
-        (upd {:a {:b 1 :c 2}}
-             [:a :b] inc
-             [:a :c] dec))
+    (do :indexes-leses
+        (is 2 (get [1 2 3] 1))
+        (is [1 3 3] (upd [1 2 3] 1 inc))
+        (is [2 2 2] (upd [1 2 3] 0 inc 2 dec))
+        (is [1 2 [4 4]]
+            (upd [1 2 [3 4]] [2 0] inc)))
 
-    (is {:a 3, :c {:d 3}}
-        (upd {:a 1 :c {:d 2}}
-             :a (f [x] (add x x x))
-             [:c :d] inc)))
+    (do :composition
+        ;; vector denotes composition (left to right)
+        (is 1 (get {:a {:b 1}} [:a :b]))
+        (is 3 (get {:a {:b [1 2 3]}} [:a :b 2]))
+        (is {:a {:b 2}} (upd {:a {:b 1}} [:a :b] inc))
+        (is {:a {:b 2 :c 1}}
+            (upd {:a {:b 1 :c 2}}
+                 [:a :b] inc
+                 [:a :c] dec))
+
+        (is {:a 3, :c {:d 3}}
+            (upd {:a 1 :c {:d 2}}
+                 :a (f [x] (add x x x))
+                 [:c :d] inc)))
 
 
-(do :functions
-    (is 1 (get 1 pos?))
-    (is (failure? (get 1 neg?)))
-    (is {:a 0} (upd {:a 1} [:a pos?] dec))
-    (is (failure? (upd {:a 0} [:a pos?] dec))))
+    (do :functions
+        (is 1 (get 1 pos?))
+        (is (failure? (get 1 neg?)))
+        (is {:a 0} (upd {:a 1} [:a pos?] dec))
+        (is (failure? (upd {:a 0} [:a pos?] dec))))
 
-(do :branching
+    (do :branching
 
-    (is (zero? (upd< 1
-                     neg? inc
-                     pos? dec)))
-    (is {:a 0}
+        (is (zero? (upd< 1
+                         neg? inc
+                         pos? dec)))
+        (is {:a 0}
 
-        (upd< {:a 1}
-              [:a pos?] dec
-              [:a neg?] inc)
+            (upd< {:a 1}
+                  [:a pos?] dec
+                  [:a neg?] inc)
 
-        (upd< {:a -1}
-              [:a pos?] dec
-              [:a neg?] inc))
+            (upd< {:a -1}
+                  [:a pos?] dec
+                  [:a neg?] inc))
 
-    (is {:a {:b 2, :c -1}}
-        (upd {:a {:b 1 :c -1}}
-             ((:< lenses)
-              [:a :c pos?] ;; branching lens
-              [:a :b pos?])
-             inc)))
+        (is {:a {:b 2, :c -1}}
+            (upd {:a {:b 1 :c -1}}
+                 ((:< lenses)
+                  [:a :c pos?] ;; branching lens
+                  [:a :b pos?])
+                 inc)))
 
-(do :option
-    (is {:a {:b 1}}
-        (upd {:a {:b 1}}
-             ((:? lenses) [:a :z :b]) ;; if points to something perform the transformation, else return data unchanged
-             inc))
+    (do :option
+        (is {:a {:b 1}}
+            (upd {:a {:b 1}}
+                 ((:? lenses) [:a :z :b]) ;; if points to something perform the transformation, else return data unchanged
+                 inc))
 
-    (is {:a {:b 2}}
-        (upd {:a {:b 1}}
-             ((:? lenses) [:a :b])
-             inc)))
+        (is {:a {:b 2}}
+            (upd {:a {:b 1}}
+                 ((:? lenses) [:a :b])
+                 inc)))
 
-(do :non-existant-keys
+    (do :non-existant-keys
 
-    (is {:a {:b {:c 42}}}
-        (upd {} ((:path lenses) [:a :b :c]) (constantly 42)))
+        (is {:a {:b {:c 42}}}
+            (upd {} ((:path lenses) [:a :b :c]) (constantly 42)))
 
-    (is {:a {:b {:c 42}}}
-        (put {} ((:path lenses) :a :b :c) 42) ;; put is a thin wrapper around 'mut, it simply wrap the transformation in a constantly call
-        (put {} ((:path lenses) [:a :b :c]) 42)
-        (put {} ((:path lenses) :a [:b :c]) 42)
-        (upd {} ((:path lenses) [:a :b] :c) (constantly 42)))
+        (is {:a {:b {:c 42}}}
+            (put {} ((:path lenses) :a :b :c) 42) ;; put is a thin wrapper around 'mut, it simply wrap the transformation in a constantly call
+            (put {} ((:path lenses) [:a :b :c]) 42)
+            (put {} ((:path lenses) :a [:b :c]) 42)
+            (upd {} ((:path lenses) [:a :b] :c) (constantly 42)))
 
-    (is {:b 1}
-        (upd {} ((:path lenses) :b) (fnil inc 0))))
+        (is {:b 1}
+            (upd {} ((:path lenses) :b) (fnil inc 0))))
 
-(do :matching-values
-    (is "io"
-        (get {:a "io"} [:a "io"]))
+    (do :matching-values
+        (is "io"
+            (get {:a "io"} [:a "io"]))
 
-    (is (failure? (get {:a "io"} [:a "iop"])))
+        (is (failure? (get {:a "io"} [:a "iop"])))
 
-    ;; if you want to match an integer (else it would be interpreted as an index lens)
-    (is 2 (get [2] [0 ((:eq lenses) 2)]))
+        ;; if you want to match an integer (else it would be interpreted as an index lens)
+        (is 2 (get [2] [0 ((:eq lenses) 2)]))
+        )
+
+    (do :pass-tests
+        ;; the pass lens can be used as a validation mecanism
+        (is ((:pass lenses)
+             {:a 1 :b "io" :p 1}
+             [:a number? pos?]
+             [:b string?])
+            {:a 1
+             :b "io"
+             :p 1})
+
+        ;; coercion
+        (is ((:pass lenses)
+             {:a 1 :b "io" :p 1}
+             [:a number? pos? inc]
+             [:b string?])
+            {:a 2 ;; :a has been coerced
+             :b "io"
+             :p 1})
+
+        )
+
+    (do :misc
+
+        ;; convertion
+        (is (div 11 10)
+            (upd 1 ((:convertion lenses)
+                    #(mul % 10)
+                    #(div % 10))
+                 inc))))
+
+($ [1 2 3] [inc inc])
+(§ {:a inc :b inc} {:a 0 :b 0})
+($ [1 2 3] (df {:a inc :b dec}))
+
+(macroexpand '(or 1 2))
+
+(macroexpand '(or x y))
+
+
+(do :df
+
+    ;; you can use vectors and maps to compose the resulting function
+    (df [inc
+         dec
+         {:doubled (f_ (mul 2 _))
+          :halfed (f_ (div _ 2))}])
+    ;; <fn>
+
+    ;; invoc it
+    (is [2 0 {:doubled 2, :halfed 1/2}]
+        (let [f (df [inc dec
+                     {:doubled (f_ (mul 2 _))
+                      :halfed (f_ (div _ 2))}])]
+             (f 1)))
+
+    ;; is equivalent to write
+    (is [2 0 {:doubled 2, :halfed 1/2}]
+        ((f1 a [(inc a) (dec a)
+                {:doubled (mul 2 a)
+                 :halfed (div a 2)}])
+         1))
+
+    ;; any invocable can serve as a leaf
+    ;; don't know if you remember, but in asparagus almost everything is invocable,
+    ;; in particular constant values like 42 or :foo return themselves
+    ;; to demonstrate that df can handle any invocable we will use some of those
+    (is [2 0 :foo 42]
+        (let [f (df [inc dec :foo 42])]
+             (f 1)))
+
+    ;; can take several arguments
+    (is [6 -4]
+        (let [f (df [add sub])] (f 1 2 3)))
+
+    ;; you can deeply mix maps and vecs to compose your function
+    (is {:addsub [6 -4], :average 2}
+        (let [f (df {:addsub [add sub]
+                     :average (f [. xs] (div (* add xs) (count xs)))})]
+             (f 1 2 3)))
+
+
+    ;; maybe you are wondering about our vec and map invocation behavior
+    ;; this is prevented here because vecs and maps mean something else in this context
+    ;; but you can use the § function to state that a leaf that is a map or a vec has to be treated as an invocable
+    ;; TODO invocable collections
+    #_(is ['(1 2 3 4 5 6) [5 -3 18]]
+        (let [f (df [concat (§ [add sub mul])])]
+          (f [1 2 3] [4 5 6])))
+
     )
-
-(do :pass-tests
-    ;; the pass lens can be used as a validation mecanism
-    (is ((:pass lenses)
-          {:a 1 :b "io" :p 1}
-          [:a number? pos?]
-          [:b string?])
-        {:a 1
-         :b "io"
-         :p 1})
-
-    ;; coercion
-    (is ((:pass lenses)
-          {:a 1 :b "io" :p 1}
-          [:a number? pos? inc]
-          [:b string?])
-        {:a 2 ;; :a has been coerced
-         :b "io"
-         :p 1})
-
-    )
-
-(do :misc
-
-    ;; convertion
-    (is (div 11 10)
-        (upd 1 ((:convertion lenses)
-                #(mul % 10)
-                #(div % 10))
-             inc)))
-
 (comment :bench
 
          (defmacro qb
